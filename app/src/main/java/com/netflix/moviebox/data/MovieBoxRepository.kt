@@ -16,34 +16,47 @@ data class HomeCategory(
 object MovieBoxRepository {
 
     // In-memory cache for fast UI restores
-    private var cachedHero: MovieBoxItem? = null
+    private var cachedHeroes: List<MovieBoxItem> = emptyList()
     private var cachedCategories: List<HomeCategory> = emptyList()
 
-    suspend fun getFeaturedHero(): MovieBoxItem = withContext(Dispatchers.IO) {
-        cachedHero?.let { return@withContext it }
+    suspend fun getFeaturedHeroes(): List<MovieBoxItem> = withContext(Dispatchers.IO) {
+        if (cachedHeroes.isNotEmpty()) return@withContext cachedHeroes
 
-        // 1. Try to get hero with trailer from genuine MovieBox home feed
         val feed = MovieBoxClient.getHomeFeed()
-        val feedHero = feed.heroBanner ?: feed.sections.values.flatten().firstOrNull { !it.trailerUrl.isNullOrEmpty() }
-
-        val hero = feedHero ?: run {
-            val items = MovieBoxClient.searchMovies("Trending", page = 1, perPage = 6)
-            items.firstOrNull { !it.stillsUrl.isNullOrEmpty() }
-                ?: items.firstOrNull { it.coverUrl.isNotEmpty() }
-                ?: MovieBoxItem(
-                    subjectId = "hero-default",
-                    title = "Avatar: The Way of Water",
+        val heroes = if (feed.heroBanners.isNotEmpty()) {
+            feed.heroBanners
+        } else {
+            val trending = feed.sections["Trending Now"] ?: feed.sections.values.firstOrNull() ?: emptyList()
+            if (trending.isNotEmpty()) trending.take(8) else listOf(
+                MovieBoxItem(
+                    subjectId = "4362429319592001952",
+                    title = "Mirzapur: The Movie [Hindi]",
                     coverUrl = "https://pbcdnw.aoneroom.com/image/2026/01/27/e9297d39584c33b5ded66cff74a31dc8.jpg",
                     stillsUrl = "https://pbcdnw.aoneroom.com/image/2022/09/09/1bb7aa281a086492c0b2a0eb354bb4bc.jpg",
-                    trailerUrl = "https://macdn.aoneroom.com/media/vone/2024/08/07/4824e7b3b80a3e630ce1b91b5cc00670.mp4",
+                    trailerUrl = "https://macdn.aoneroom.com/media/vone/2026/06/06/2efb348a0ff6312e4926a2e91934a1db-ld.mp4",
                     score = 9.2,
                     releaseDate = "2024",
-                    description = "Jake Sully lives with his newfound family formed on the extrasolar moon Pandora. Once a familiar threat returns to finish what was previously started, Jake must work with Neytiri and the army of the Na'vi race to protect their home.",
-                    detectedLang = "English"
+                    description = "The battle for Purvanchal reaches its ultimate cinematic showdown.",
+                    detectedLang = "Hindi"
                 )
+            )
         }
-        cachedHero = hero
-        hero
+        cachedHeroes = heroes
+        heroes
+    }
+
+    suspend fun getFeaturedHero(): MovieBoxItem = withContext(Dispatchers.IO) {
+        getFeaturedHeroes().firstOrNull() ?: MovieBoxItem(
+            subjectId = "4362429319592001952",
+            title = "Mirzapur: The Movie [Hindi]",
+            coverUrl = "https://pbcdnw.aoneroom.com/image/2026/01/27/e9297d39584c33b5ded66cff74a31dc8.jpg",
+            stillsUrl = "https://pbcdnw.aoneroom.com/image/2022/09/09/1bb7aa281a086492c0b2a0eb354bb4bc.jpg",
+            trailerUrl = "https://macdn.aoneroom.com/media/vone/2026/06/06/2efb348a0ff6312e4926a2e91934a1db-ld.mp4",
+            score = 9.2,
+            releaseDate = "2024",
+            description = "The battle for Purvanchal reaches its ultimate cinematic showdown.",
+            detectedLang = "Hindi"
+        )
     }
 
     suspend fun getHomeCategories(): List<HomeCategory> = withContext(Dispatchers.IO) {

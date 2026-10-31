@@ -136,7 +136,8 @@ fun MainAppScaffold() {
                                 val stream = MovieBoxClient.extractStream(movie.subjectId)
                                 val url = stream.fullStreamUrl ?: stream.trailerUrl ?: movie.trailerUrl
                                 if (url != null) {
-                                    PlayerActivity.launch(context, url, movie.title)
+                                    val titleBadge = if (stream.hasFullMovie) "${movie.title} [Full Movie]" else "${movie.title} [Trailer]"
+                                    PlayerActivity.launch(context, url, titleBadge)
                                 } else {
                                     Toast.makeText(context, "Stream not available", Toast.LENGTH_SHORT).show()
                                 }

@@ -1,16 +1,16 @@
 package com.netflix.moviebox.ui.components
 
 import androidx.annotation.OptIn
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -31,15 +31,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.netflix.moviebox.api.MovieBoxItem
 import com.netflix.moviebox.ui.theme.NetflixColors
 import com.netflix.moviebox.ui.theme.NetflixDimens
+import kotlinx.coroutines.delay
 
-@OptIn(UnstableApi::class)
 @Composable
 fun HeroBillboard(
     movie: MovieBoxItem?,
@@ -48,7 +50,26 @@ fun HeroBillboard(
     onSearchClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    if (movie == null) {
+    val list = if (movie != null) listOf(movie) else emptyList()
+    HeroBillboard(
+        heroes = list,
+        onPlayClick = onPlayClick,
+        onDetailsClick = onDetailsClick,
+        onSearchClick = onSearchClick,
+        modifier = modifier
+    )
+}
+
+@OptIn(UnstableApi::class)
+@Composable
+fun HeroBillboard(
+    heroes: List<MovieBoxItem>,
+    onPlayClick: (MovieBoxItem) -> Unit,
+    onDetailsClick: (MovieBoxItem) -> Unit,
+    onSearchClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (heroes.isEmpty()) {
         Box(
             modifier = modifier
                 .fillMaxWidth()
@@ -58,33 +79,58 @@ fun HeroBillboard(
         return
     }
 
+    var currentIndex by remember { mutableIntStateOf(0) }
+    val safeIndex = currentIndex.coerceIn(0, heroes.size - 1)
+    val currentMovie = heroes[safeIndex]
+
+    // Auto-rotate hero every 14 seconds
+    LaunchedEffect(heroes.size, currentIndex) {
+        if (heroes.size > 1) {
+            delay(14000L)
+            currentIndex = (currentIndex + 1) % heroes.size
+        }
+    }
+
     val context = LocalContext.current
     var isInList by remember { mutableStateOf(false) }
     var isVideoPlaying by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(true) }
     var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
 
-    val trailerUrl = movie.trailerUrl
+    val trailerUrl = currentMovie.trailerUrl
 
-    DisposableEffect(trailerUrl) {
+    DisposableEffect(currentMovie.subjectId, trailerUrl) {
+        isVideoPlaying = false
         if (!trailerUrl.isNullOrEmpty()) {
-            val player = ExoPlayer.Builder(context).build().apply {
-                setMediaItem(MediaItem.fromUri(trailerUrl))
-                repeatMode = Player.REPEAT_MODE_ONE
-                volume = 0f
-                playWhenReady = true
-                addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(state: Int) {
-                        if (state == Player.STATE_READY) {
-                            isVideoPlaying = true
+            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+                .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(10000)
+                .setReadTimeoutMs(10000)
+
+            val mediaSourceFactory = DefaultMediaSourceFactory(context)
+                .setDataSourceFactory(httpDataSourceFactory)
+
+            val player = ExoPlayer.Builder(context)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .build()
+                .apply {
+                    setMediaItem(MediaItem.fromUri(trailerUrl))
+                    repeatMode = Player.REPEAT_MODE_ONE
+                    volume = if (isMuted) 0f else 1f
+                    playWhenReady = true
+                    addListener(object : Player.Listener {
+                        override fun onPlaybackStateChanged(state: Int) {
+                            if (state == Player.STATE_READY) {
+                                isVideoPlaying = true
+                            }
                         }
-                    }
-                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                        isVideoPlaying = false
-                    }
-                })
-                prepare()
-            }
+                        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                            isVideoPlaying = false
+                        }
+                    })
+                    prepare()
+                }
             exoPlayer = player
             onDispose {
                 player.release()
@@ -101,13 +147,19 @@ fun HeroBillboard(
             .fillMaxWidth()
             .height(NetflixDimens.HeroHeight)
     ) {
-        // 1. Poster Backdrop (always present as base / loading placeholder)
-        AsyncImage(
-            model = movie.stillsUrl ?: movie.coverUrl,
-            contentDescription = movie.title,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
+        // 1. Poster Backdrop (Always smooth crossfade on movie switch)
+        Crossfade(
+            targetState = currentMovie,
+            animationSpec = tween(700),
+            modifier = Modifier.fillMaxSize()
+        ) { movie ->
+            AsyncImage(
+                model = movie.stillsUrl ?: movie.coverUrl,
+                contentDescription = movie.title,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
 
         // 2. Auto-playing Trailer (fades in smoothly once ready)
         if (!trailerUrl.isNullOrEmpty() && exoPlayer != null) {
@@ -151,7 +203,46 @@ fun HeroBillboard(
                 )
         )
 
-        // 4. Mute / Unmute Floating Action Button (Netflix style)
+        // 4. Next / Prev Chevron Controls (Allows manual hero switching)
+        if (heroes.size > 1) {
+            // Left Chevron
+            IconButton(
+                onClick = {
+                    currentIndex = if (currentIndex > 0) currentIndex - 1 else heroes.size - 1
+                },
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 4.dp)
+                    .size(36.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), shape = CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ChevronLeft,
+                    contentDescription = "Previous Hero",
+                    tint = Color.White.copy(alpha = 0.8f)
+                )
+            }
+
+            // Right Chevron
+            IconButton(
+                onClick = {
+                    currentIndex = (currentIndex + 1) % heroes.size
+                },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 4.dp)
+                    .size(36.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), shape = CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = "Next Hero",
+                    tint = Color.White.copy(alpha = 0.8f)
+                )
+            }
+        }
+
+        // 5. Mute / Unmute Floating Action Button
         if (!trailerUrl.isNullOrEmpty() && isVideoPlaying) {
             Box(
                 modifier = Modifier
@@ -174,7 +265,7 @@ fun HeroBillboard(
             }
         }
 
-        // 3. Top Navigation Header
+        // 6. Top Navigation Header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -202,11 +293,11 @@ fun HeroBillboard(
             }
         }
 
-        // 4. Hero Information & Actions
+        // 7. Hero Information & Actions
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 20.dp, start = 16.dp, end = 16.dp),
+                .padding(bottom = 16.dp, start = 16.dp, end = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Language & Score Tag
@@ -219,7 +310,7 @@ fun HeroBillboard(
                     shape = RoundedCornerShape(2.dp)
                 ) {
                     Text(
-                        text = movie.detectedLang.uppercase(),
+                        text = currentMovie.detectedLang.uppercase(),
                         color = Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
@@ -228,14 +319,14 @@ fun HeroBillboard(
                 }
 
                 Text(
-                    text = "${movie.score} Match",
+                    text = "${currentMovie.score} Match",
                     color = Color(0xFF46D369),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
 
                 Text(
-                    text = movie.releaseDate,
+                    text = currentMovie.releaseDate,
                     color = NetflixColors.TextMuted,
                     fontSize = 12.sp
                 )
@@ -245,14 +336,14 @@ fun HeroBillboard(
 
             // Title
             Text(
-                text = movie.title,
+                text = currentMovie.title,
                 color = NetflixColors.PureWhite,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Black,
                 maxLines = 2
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Action Row: My List | Play | Info
             Row(
@@ -265,9 +356,9 @@ fun HeroBillboard(
                     onToggle = { isInList = it }
                 )
 
-                // Play Button
+                // Play Button (Launches Full Movie)
                 Button(
-                    onClick = { onPlayClick(movie) },
+                    onClick = { onPlayClick(currentMovie) },
                     colors = ButtonDefaults.buttonColors(containerColor = NetflixColors.PureWhite),
                     shape = RoundedCornerShape(4.dp),
                     modifier = Modifier
@@ -292,7 +383,7 @@ fun HeroBillboard(
                 // Info Action
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable { onDetailsClick(movie) }
+                    modifier = Modifier.clickable { onDetailsClick(currentMovie) }
                 ) {
                     Icon(
                         Icons.Default.Info,
@@ -306,6 +397,29 @@ fun HeroBillboard(
                         color = NetflixColors.PureWhite,
                         fontSize = 11.sp
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 8. Carousel Progress Indicator Dots
+            if (heroes.size > 1) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    heroes.take(7).forEachIndexed { idx, _ ->
+                        val isSelected = idx == safeIndex
+                        Box(
+                            modifier = Modifier
+                                .size(if (isSelected) 7.dp else 5.dp)
+                                .background(
+                                    color = if (isSelected) NetflixColors.NetflixRed else Color.White.copy(alpha = 0.4f),
+                                    shape = CircleShape
+                                )
+                                .clickable { currentIndex = idx }
+                        )
+                    }
                 }
             }
         }

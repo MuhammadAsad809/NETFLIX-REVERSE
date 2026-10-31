@@ -23,13 +23,13 @@ fun HomeScreen(
     onSearchClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var heroMovie by remember { mutableStateOf<MovieBoxItem?>(null) }
+    var heroMovies by remember { mutableStateOf<List<MovieBoxItem>>(emptyList()) }
     var categories by remember { mutableStateOf<List<HomeCategory>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         isLoading = true
-        heroMovie = MovieBoxRepository.getFeaturedHero()
+        heroMovies = MovieBoxRepository.getFeaturedHeroes()
         categories = MovieBoxRepository.getHomeCategories()
         isLoading = false
     }
@@ -58,10 +58,10 @@ fun HomeScreen(
                 .background(NetflixColors.BackgroundDark),
             contentPadding = PaddingValues(bottom = 70.dp)
         ) {
-            // 1. Hero Billboard Header
+            // 1. Hero Billboard Header (Rotating Carousel)
             item {
                 HeroBillboard(
-                    movie = heroMovie,
+                    heroes = heroMovies,
                     onPlayClick = onPlayMovie,
                     onDetailsClick = onMovieClick,
                     onSearchClick = onSearchClick
