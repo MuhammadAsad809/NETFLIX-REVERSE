@@ -1,6 +1,7 @@
 package com.netflix.moviebox.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -20,6 +21,7 @@ fun SplashScreen(
 ) {
     val context = LocalContext.current
     val soundManager = remember { SoundManager(context) }
+    val currentOnSplashFinished by rememberUpdatedState(onSplashFinished)
 
     val composition by rememberLottieComposition(
         LottieCompositionSpec.Asset("lottiefiles/glowing-netflix-n-logo.json")
@@ -27,33 +29,16 @@ fun SplashScreen(
     val progress by animateLottieCompositionAsState(
         composition = composition,
         iterations = 1,
-        restartOnPlay = false
+        restartOnPlay = true
     )
 
-    var finished by remember { mutableStateOf(false) }
-
-    // Trigger iconic studio Ta-Dum sound on launch
+    // Trigger iconic studio Ta-Dum sound and guarantee transition to Home in a single coroutine
     LaunchedEffect(Unit) {
-        delay(150)
+        delay(100)
         soundManager.playChime()
-    }
-
-    // When 2.0s animation finishes smoothly, transition to Home
-    LaunchedEffect(progress) {
-        if (progress >= 0.98f && !finished) {
-            finished = true
-            delay(350)
-            onSplashFinished()
-        }
-    }
-
-    // Safety fallback timeout to guarantee transition even on slow devices
-    LaunchedEffect(Unit) {
-        delay(2600)
-        if (!finished) {
-            finished = true
-            onSplashFinished()
-        }
+        // Wait 2.0s for the Netflix N glow animation to complete
+        delay(2000)
+        currentOnSplashFinished()
     }
 
     DisposableEffect(Unit) {
@@ -63,7 +48,8 @@ fun SplashScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            .clickable { currentOnSplashFinished() }, // Allow tapping screen to skip splash immediately
         contentAlignment = Alignment.Center
     ) {
         LottieAnimation(
