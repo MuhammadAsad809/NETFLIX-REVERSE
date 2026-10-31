@@ -2,6 +2,7 @@ package com.netflix.moviebox.ui.components
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -9,13 +10,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,9 +23,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.netflix.moviebox.R
+import com.netflix.moviebox.api.EpisodeItem
 import com.netflix.moviebox.api.MovieBoxClient
 import com.netflix.moviebox.api.MovieBoxItem
-import com.netflix.moviebox.api.StreamResolution
+import com.netflix.moviebox.api.SeasonDetail
+import com.netflix.moviebox.api.SubjectDetailResult
 import com.netflix.moviebox.ui.theme.NetflixColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,14 +39,20 @@ fun DetailBottomSheet(
     onDownloadClick: (subjectId: String, title: String) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var streamResolution by remember { mutableStateOf<StreamResolution?>(null) }
-    var isLoadingStream by remember { mutableStateOf(true) }
+    var detailResult by remember { mutableStateOf<SubjectDetailResult?>(null) }
+    var isLoadingDetail by remember { mutableStateOf(true) }
+    var selectedSeasonIndex by remember { mutableIntStateOf(0) }
+    var selectedQuality by remember { mutableStateOf("Auto") }
 
     LaunchedEffect(movie.subjectId) {
-        isLoadingStream = true
-        streamResolution = MovieBoxClient.extractStream(movie.subjectId)
-        isLoadingStream = false
+        isLoadingDetail = true
+        detailResult = MovieBoxClient.getSubjectDetail(movie.subjectId)
+        isLoadingDetail = false
     }
+
+    val seasons = detailResult?.seasons ?: emptyList()
+    val isSeries = movie.subjectType == 2 || seasons.isNotEmpty()
+    val activeSeason: SeasonDetail? = seasons.getOrNull(selectedSeasonIndex) ?: seasons.firstOrNull()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -118,6 +122,21 @@ fun DetailBottomSheet(
                     )
                 }
 
+                if (isSeries) {
+                    Surface(
+                        color = NetflixColors.NetflixRed,
+                        shape = RoundedCornerShape(2.dp)
+                    ) {
+                        Text(
+                            text = "TV SERIES",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
                 // Extracted Hawkins Audio / Video Badges
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Image(
@@ -133,24 +152,61 @@ fun DetailBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // 3. Play Button (Full Movie)
+            // 3. Video Quality Selector
+            Text(
+                text = "Stream & Download Quality",
+                color = NetflixColors.PureWhite,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val availableQualities = listOf("Auto", "1080p", "720p", "480p")
+                availableQualities.forEach { q ->
+                    val isSelected = selectedQuality == q
+                    Surface(
+                        color = if (isSelected) NetflixColors.NetflixRed else Color(0xFF262626),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.clickable { selectedQuality = q }
+                    ) {
+                        Text(
+                            text = q,
+                            color = if (isSelected) Color.White else NetflixColors.TextMuted,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 4. Play Button (Full Movie or First Episode)
+            val streamUrl = detailResult?.streams?.fullStreamUrl
+                ?: detailResult?.streams?.trailerUrl
+                ?: detailResult?.trailerUrl
+
             Button(
                 onClick = {
-                    val streamUrl = streamResolution?.fullStreamUrl ?: streamResolution?.trailerUrl
                     if (streamUrl != null) {
-                        onPlayClick(streamUrl, movie.title)
+                        val playTitle = if (selectedQuality == "Auto") movie.title else "${movie.title} [${selectedQuality}]"
+                        onPlayClick(streamUrl, playTitle)
                     }
                 },
-                enabled = !isLoadingStream && (streamResolution?.fullStreamUrl != null || streamResolution?.trailerUrl != null),
+                enabled = !isLoadingDetail && streamUrl != null,
                 colors = ButtonDefaults.buttonColors(containerColor = NetflixColors.PureWhite),
                 shape = RoundedCornerShape(4.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp)
             ) {
-                if (isLoadingStream) {
+                if (isLoadingDetail) {
                     CircularProgressIndicator(
                         color = Color.Black,
                         strokeWidth = 2.dp,
@@ -162,7 +218,11 @@ fun DetailBottomSheet(
                     Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (streamResolution?.hasFullMovie == true) "Play Full Movie" else "Play Trailer",
+                        text = when {
+                            detailResult?.streams?.hasFullMovie == true -> "Play Full Movie ($selectedQuality)"
+                            isSeries -> "Play Series ($selectedQuality)"
+                            else -> "Play Trailer ($selectedQuality)"
+                        },
                         color = Color.Black,
                         fontWeight = FontWeight.Bold
                     )
@@ -171,12 +231,13 @@ fun DetailBottomSheet(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 4. Download Button
+            // 5. Download Button
             Button(
                 onClick = {
-                    onDownloadClick(movie.subjectId, movie.title)
+                    val downloadTitle = if (selectedQuality == "Auto") movie.title else "${movie.title}_${selectedQuality}"
+                    onDownloadClick(movie.subjectId, downloadTitle)
                 },
-                enabled = streamResolution?.hasFullMovie == true,
+                enabled = detailResult?.streams?.hasFullMovie == true,
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF262626)),
                 shape = RoundedCornerShape(4.dp),
                 modifier = Modifier
@@ -186,7 +247,7 @@ fun DetailBottomSheet(
                 Icon(Icons.Default.Download, contentDescription = null, tint = NetflixColors.PureWhite)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Download Movie",
+                    text = "Download ($selectedQuality)",
                     color = NetflixColors.PureWhite,
                     fontWeight = FontWeight.Bold
                 )
@@ -194,7 +255,71 @@ fun DetailBottomSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 5. Synopsis
+            // 6. TV Series Seasons & Episodes Selector
+            if (isSeries) {
+                Divider(color = Color(0xFF333333), thickness = 1.dp)
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text(
+                    text = "Episodes",
+                    color = NetflixColors.PureWhite,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Season Tabs
+                if (seasons.isNotEmpty()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        seasons.forEachIndexed { idx, s ->
+                            val isSeasonSelected = idx == selectedSeasonIndex
+                            Surface(
+                                color = if (isSeasonSelected) Color(0xFF444444) else Color(0xFF1E1E1E),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.clickable { selectedSeasonIndex = idx }
+                            ) {
+                                Text(
+                                    text = "Season ${s.seasonNumber}",
+                                    color = if (isSeasonSelected) NetflixColors.PureWhite else NetflixColors.TextMuted,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSeasonSelected) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                // Episode List
+                val episodeList = activeSeason?.episodes ?: (1..6).map { epNum ->
+                    EpisodeItem(
+                        episodeNumber = epNum,
+                        title = "Episode $epNum",
+                        duration = "45m",
+                        stillUrl = movie.stillsUrl ?: movie.coverUrl
+                    )
+                }
+
+                episodeList.forEach { ep ->
+                    EpisodeRowItem(
+                        episode = ep,
+                        seasonNumber = activeSeason?.seasonNumber ?: 1,
+                        movieTitle = movie.title,
+                        selectedQuality = selectedQuality,
+                        fallbackStreamUrl = streamUrl,
+                        onPlayClick = onPlayClick
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            // 7. Synopsis
             Text(
                 text = movie.description.ifEmpty { "High-speed streaming available via MovieBox CDN with multi-language audio selection." },
                 color = NetflixColors.TextMuted,
@@ -203,6 +328,74 @@ fun DetailBottomSheet(
             )
 
             Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun EpisodeRowItem(
+    episode: EpisodeItem,
+    seasonNumber: Int,
+    movieTitle: String,
+    selectedQuality: String,
+    fallbackStreamUrl: String?,
+    onPlayClick: (streamUrl: String, title: String) -> Unit
+) {
+    Surface(
+        color = Color(0xFF1F1F1F),
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                if (fallbackStreamUrl != null) {
+                    val epTitle = "$movieTitle - S${seasonNumber}:E${episode.episodeNumber} [${selectedQuality}]"
+                    onPlayClick(fallbackStreamUrl, epTitle)
+                }
+            }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 80.dp, height = 50.dp)
+                    .background(Color.Black, shape = RoundedCornerShape(4.dp))
+            ) {
+                AsyncImage(
+                    model = episode.stillUrl,
+                    contentDescription = episode.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                Icon(
+                    imageVector = Icons.Default.PlayCircle,
+                    contentDescription = "Play Episode",
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier
+                        .size(24.dp)
+                        .align(Alignment.Center)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "${episode.episodeNumber}. ${episode.title}",
+                    color = NetflixColors.PureWhite,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "${episode.duration} • $selectedQuality",
+                    color = NetflixColors.TextMuted,
+                    fontSize = 12.sp
+                )
+            }
         }
     }
 }

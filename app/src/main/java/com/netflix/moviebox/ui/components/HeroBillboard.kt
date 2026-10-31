@@ -1,13 +1,21 @@
 package com.netflix.moviebox.ui.components
 
+import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,14 +23,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.netflix.moviebox.api.MovieBoxItem
 import com.netflix.moviebox.ui.theme.NetflixColors
 import com.netflix.moviebox.ui.theme.NetflixDimens
 
+@OptIn(UnstableApi::class)
 @Composable
 fun HeroBillboard(
     movie: MovieBoxItem?,
@@ -41,14 +58,50 @@ fun HeroBillboard(
         return
     }
 
+    val context = LocalContext.current
     var isInList by remember { mutableStateOf(false) }
+    var isVideoPlaying by remember { mutableStateOf(false) }
+    var isMuted by remember { mutableStateOf(true) }
+    var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
+
+    val trailerUrl = movie.trailerUrl
+
+    DisposableEffect(trailerUrl) {
+        if (!trailerUrl.isNullOrEmpty()) {
+            val player = ExoPlayer.Builder(context).build().apply {
+                setMediaItem(MediaItem.fromUri(trailerUrl))
+                repeatMode = Player.REPEAT_MODE_ONE
+                volume = 0f
+                playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(state: Int) {
+                        if (state == Player.STATE_READY) {
+                            isVideoPlaying = true
+                        }
+                    }
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        isVideoPlaying = false
+                    }
+                })
+                prepare()
+            }
+            exoPlayer = player
+            onDispose {
+                player.release()
+                exoPlayer = null
+                isVideoPlaying = false
+            }
+        } else {
+            onDispose { }
+        }
+    }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(NetflixDimens.HeroHeight)
     ) {
-        // 1. Poster Backdrop (prefer wide stills backdrop)
+        // 1. Poster Backdrop (always present as base / loading placeholder)
         AsyncImage(
             model = movie.stillsUrl ?: movie.coverUrl,
             contentDescription = movie.title,
@@ -56,7 +109,31 @@ fun HeroBillboard(
             contentScale = ContentScale.Crop
         )
 
-        // 2. Multi-stop Gradient Scrim
+        // 2. Auto-playing Trailer (fades in smoothly once ready)
+        if (!trailerUrl.isNullOrEmpty() && exoPlayer != null) {
+            AnimatedVisibility(
+                visible = isVideoPlaying,
+                enter = fadeIn(animationSpec = tween(600)),
+                exit = fadeOut(animationSpec = tween(400)),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            player = exoPlayer
+                            useController = false
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        }
+                    },
+                    update = { view ->
+                        view.player = exoPlayer
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        // 3. Multi-stop Gradient Scrim
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -73,6 +150,29 @@ fun HeroBillboard(
                     )
                 )
         )
+
+        // 4. Mute / Unmute Floating Action Button (Netflix style)
+        if (!trailerUrl.isNullOrEmpty() && isVideoPlaying) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 90.dp, end = 16.dp)
+                    .size(36.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), shape = CircleShape)
+                    .clickable {
+                        isMuted = !isMuted
+                        exoPlayer?.volume = if (isMuted) 0f else 1f
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                    contentDescription = if (isMuted) "Unmute" else "Mute",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
 
         // 3. Top Navigation Header
         Row(

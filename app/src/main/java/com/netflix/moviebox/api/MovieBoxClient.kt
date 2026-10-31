@@ -16,13 +16,16 @@ data class MovieBoxItem(
     val title: String,
     val coverUrl: String,
     val stillsUrl: String? = null,
+    val trailerUrl: String? = null,
     val score: Double = 8.5,
     val releaseDate: String = "2024",
     val description: String = "",
     val detectedLang: String = "English",
     val duration: String = "2h 10m",
     val genre: String = "",
-    val subjectType: Int = 1
+    val subjectType: Int = 1,
+    val seasonCount: Int = 0,
+    val detailPath: String = ""
 )
 
 data class StreamResolution(
@@ -34,6 +37,40 @@ data class StreamResolution(
     val fullStreamUrl: String?,
     val trailerUrl: String?,
     val allStreams: List<String>
+)
+
+data class EpisodeItem(
+    val episodeNumber: Int,
+    val title: String,
+    val duration: String = "45m",
+    val stillUrl: String? = null
+)
+
+data class SeasonDetail(
+    val seasonNumber: Int,
+    val maxEpisodes: Int,
+    val resolutions: List<Int>,
+    val episodes: List<EpisodeItem>
+)
+
+data class SubjectDetailResult(
+    val subjectId: String,
+    val title: String,
+    val description: String,
+    val coverUrl: String,
+    val stillsUrl: String?,
+    val trailerUrl: String?,
+    val score: Double,
+    val releaseDate: String,
+    val detectedLang: String,
+    val subjectType: Int,
+    val seasons: List<SeasonDetail>,
+    val streams: StreamResolution
+)
+
+data class HomeFeedResult(
+    val heroBanner: MovieBoxItem?,
+    val sections: Map<String, List<MovieBoxItem>>
 )
 
 object MovieBoxClient {
@@ -115,56 +152,8 @@ object MovieBoxClient {
                 val result = mutableListOf<MovieBoxItem>()
                 for (i in 0 until itemsArr.length()) {
                     val obj = itemsArr.getJSONObject(i)
-                    val id = obj.optString("subjectId", obj.optString("id", ""))
-                    val title = obj.optString("title", "")
-
-                    // Extract cover and stills URLs correctly from nested JSON objects
-                    val coverObj = obj.optJSONObject("cover")
-                    val stillsObj = obj.optJSONObject("stills")
-                    val cover = coverObj?.optString("url")?.takeIf { it.isNotBlank() }
-                        ?: obj.optString("coverUrl").takeIf { it.isNotBlank() }
-                        ?: obj.optString("cover").takeIf { it.isNotBlank() }
-                        ?: stillsObj?.optString("url")
-                        ?: ""
-
-                    val stills = stillsObj?.optString("url")?.takeIf { it.isNotBlank() }
-
-                    val ratingStr = obj.optString("imdbRatingValue", "")
-                    val score = if (ratingStr.isNotBlank()) {
-                        ratingStr.toDoubleOrNull() ?: 8.4
-                    } else {
-                        obj.optDouble("score", 8.4)
-                    }
-
-                    val release = obj.optString("releaseDate", "2024").let {
-                        if (it.length >= 4) it.substring(0, 4) else "2024"
-                    }
-                    val desc = obj.optString("description", "")
-                    val lang = detectLanguage(title)
-                    val durationSec = obj.optInt("duration", 0)
-                    val durationStr = if (durationSec > 0) {
-                        val hrs = durationSec / 3600
-                        val mins = (durationSec % 3600) / 60
-                        if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
-                    } else "2h 10m"
-                    val genre = obj.optString("genre", "")
-                    val st = obj.optInt("subjectType", 1)
-
-                    val item = MovieBoxItem(
-                        subjectId = id,
-                        title = title,
-                        coverUrl = cover,
-                        stillsUrl = stills,
-                        score = score,
-                        releaseDate = release,
-                        description = desc,
-                        detectedLang = lang,
-                        duration = durationStr,
-                        genre = genre,
-                        subjectType = st
-                    )
-
-                    if (langFilter.isEmpty() || lang.equals(langFilter, ignoreCase = true)) {
+                    val item = parseMovieBoxItemFromJson(obj)
+                    if (langFilter.isEmpty() || item.detectedLang.equals(langFilter, ignoreCase = true)) {
                         result.add(item)
                     }
                 }
@@ -174,6 +163,245 @@ object MovieBoxClient {
             e.printStackTrace()
             emptyList()
         }
+    }
+
+    fun parseMovieBoxItemFromJson(obj: JSONObject): MovieBoxItem {
+        val id = obj.optString("subjectId", obj.optString("id", ""))
+        val title = obj.optString("title", "")
+
+        val coverObj = obj.optJSONObject("cover")
+        val stillsObj = obj.optJSONObject("stills")
+        val cover = coverObj?.optString("url")?.takeIf { it.isNotBlank() }
+            ?: obj.optString("coverUrl").takeIf { it.isNotBlank() }
+            ?: obj.optString("cover").takeIf { it.isNotBlank() }
+            ?: stillsObj?.optString("url")
+            ?: ""
+
+        val stills = stillsObj?.optString("url")?.takeIf { it.isNotBlank() }
+            ?: cover
+
+        val trailerUrl = obj.optJSONObject("trailer")?.optJSONObject("videoAddress")?.optString("url")?.takeIf { it.isNotBlank() }
+
+        val ratingStr = obj.optString("imdbRatingValue", "")
+        val score = if (ratingStr.isNotBlank()) {
+            ratingStr.toDoubleOrNull() ?: 8.4
+        } else {
+            obj.optDouble("score", 8.4)
+        }
+
+        val release = obj.optString("releaseDate", "2024").let {
+            if (it.length >= 4) it.substring(0, 4) else "2024"
+        }
+        val desc = obj.optString("description", "")
+        val lang = detectLanguage(title)
+        val durationSec = obj.optInt("duration", 0)
+        val durationStr = if (durationSec > 0) {
+            val hrs = durationSec / 3600
+            val mins = (durationSec % 3600) / 60
+            if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
+        } else "2h 10m"
+        val genre = obj.optString("genre", "")
+        val st = obj.optInt("subjectType", 1)
+        val season = obj.optInt("season", 0)
+        val detailPath = obj.optString("detailPath", "")
+
+        return MovieBoxItem(
+            subjectId = id,
+            title = title,
+            coverUrl = cover,
+            stillsUrl = stills,
+            trailerUrl = trailerUrl,
+            score = score,
+            releaseDate = release,
+            description = desc,
+            detectedLang = lang,
+            duration = durationStr,
+            genre = genre,
+            subjectType = st,
+            seasonCount = season,
+            detailPath = detailPath
+        )
+    }
+
+    suspend fun getHomeFeed(): HomeFeedResult = withContext(Dispatchers.IO) {
+        val url = "https://h5-api.aoneroom.com/wefeed-h5api-bff/home"
+        val reqBuilder = Request.Builder().url(url).get()
+        getApiHeaders().forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+
+        try {
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext HomeFeedResult(null, emptyMap())
+                val bodyStr = response.body?.string() ?: return@withContext HomeFeedResult(null, emptyMap())
+                val root = JSONObject(bodyStr)
+                val operatingList = root.optJSONObject("data")?.optJSONArray("operatingList")
+                    ?: return@withContext HomeFeedResult(null, emptyMap())
+
+                var heroCandidate: MovieBoxItem? = null
+                val sectionsMap = mutableMapOf<String, MutableList<MovieBoxItem>>()
+
+                for (i in 0 until operatingList.length()) {
+                    val op = operatingList.getJSONObject(i)
+                    val title = op.optString("title", "").trim()
+                    val opType = op.optString("type", "")
+
+                    if (opType == "BANNER" && heroCandidate == null) {
+                        val bannerObj = op.optJSONObject("banner")
+                        val itemsArr = bannerObj?.optJSONArray("items")
+                        if (itemsArr != null && itemsArr.length() > 0) {
+                            val b0 = itemsArr.getJSONObject(0)
+                            val bTitle = b0.optString("title", "")
+                            val imgUrl = b0.optJSONObject("image")?.optString("url") ?: ""
+                            val bId = b0.optString("id", "0")
+                            heroCandidate = MovieBoxItem(
+                                subjectId = bId,
+                                title = bTitle,
+                                coverUrl = imgUrl,
+                                stillsUrl = imgUrl,
+                                score = 9.0,
+                                releaseDate = "2024",
+                                description = "",
+                                detectedLang = detectLanguage(bTitle),
+                                duration = "2h 15m",
+                                genre = "Action, Adventure",
+                                subjectType = 1
+                            )
+                        }
+                    } else if (op.has("subjects")) {
+                        val subjectsArr = op.optJSONArray("subjects") ?: continue
+                        if (subjectsArr.length() == 0) continue
+
+                        val itemsList = mutableListOf<MovieBoxItem>()
+                        for (j in 0 until subjectsArr.length()) {
+                            val sObj = subjectsArr.getJSONObject(j)
+                            val item = parseMovieBoxItemFromJson(sObj)
+                            itemsList.add(item)
+                        }
+
+                        if (itemsList.isNotEmpty()) {
+                            val cleanTitle = when {
+                                title.contains("Trending Now", ignoreCase = true) -> "Trending Now"
+                                title.contains("Cinema", ignoreCase = true) -> "Top Cinema"
+                                title.contains("Top Series", ignoreCase = true) -> "Top TV Series"
+                                title.contains("Hollywood", ignoreCase = true) -> "Hollywood Hits"
+                                title.contains("Bollywood", ignoreCase = true) -> "Bollywood Cinema"
+                                title.contains("South Indian", ignoreCase = true) -> "South Indian Action"
+                                title.contains("Western TV", ignoreCase = true) -> "Western TV Shows"
+                                title.contains("Indian Drama", ignoreCase = true) -> "Indian Drama"
+                                title.contains("Best Asian Drama", ignoreCase = true) -> "Asian Dramas"
+                                title.contains("Top Anime", ignoreCase = true) -> "Top Anime & Animation"
+                                title.contains("Turkish Drama", ignoreCase = true) -> "Turkish Drama"
+                                title.contains("Coming Soon", ignoreCase = true) -> "Coming Soon"
+                                else -> title.replace(Regex("[^a-zA-Z0-9 &-]"), "").trim()
+                            }
+                            if (cleanTitle.isNotBlank()) {
+                                sectionsMap[cleanTitle] = itemsList
+                            }
+                        }
+                    }
+                }
+
+                // If hero doesn't have a trailer yet, pick from Trending
+                val trendingItems = sectionsMap["Trending Now"] ?: sectionsMap.values.firstOrNull()
+                val trendingWithTrailer = trendingItems?.firstOrNull { !it.trailerUrl.isNullOrEmpty() }
+                if (trendingWithTrailer != null) {
+                    heroCandidate = trendingWithTrailer.copy(
+                        stillsUrl = heroCandidate?.stillsUrl ?: trendingWithTrailer.stillsUrl ?: trendingWithTrailer.coverUrl
+                    )
+                }
+
+                HomeFeedResult(heroCandidate, sectionsMap)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            HomeFeedResult(null, emptyMap())
+        }
+    }
+
+    suspend fun getSubjectDetail(subjectId: String): SubjectDetailResult = withContext(Dispatchers.IO) {
+        val detailUrl = "https://h5-api.aoneroom.com/wefeed-h5api-bff/detail?subjectId=$subjectId"
+        val reqBuilder = Request.Builder().url(detailUrl).get()
+        getApiHeaders().forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+
+        var item = MovieBoxItem(subjectId = subjectId, title = "Movie", coverUrl = "")
+        val seasonsList = mutableListOf<SeasonDetail>()
+
+        try {
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string() ?: ""
+                    val root = JSONObject(bodyStr)
+                    val dataObj = root.optJSONObject("data")
+                    val subjectObj = dataObj?.optJSONObject("subject")
+                    if (subjectObj != null) {
+                        item = parseMovieBoxItemFromJson(subjectObj)
+                    }
+
+                    val resourceObj = dataObj?.optJSONObject("resource")
+                    val seasonsArr = resourceObj?.optJSONArray("seasons")
+                    if (seasonsArr != null) {
+                        for (i in 0 until seasonsArr.length()) {
+                            val sObj = seasonsArr.getJSONObject(i)
+                            val seNum = sObj.optInt("se", i + 1)
+                            val maxEp = sObj.optInt("maxEp", 1)
+
+                            val resList = mutableListOf<Int>()
+                            val resArr = sObj.optJSONArray("resolutions")
+                            if (resArr != null) {
+                                for (r in 0 until resArr.length()) {
+                                    val rObj = resArr.getJSONObject(r)
+                                    val resVal = rObj.optInt("resolution", 0)
+                                    if (resVal > 0 && !resList.contains(resVal)) {
+                                        resList.add(resVal)
+                                    }
+                                }
+                            }
+                            if (resList.isEmpty()) {
+                                resList.addAll(listOf(1080, 720, 480))
+                            }
+                            resList.sortDescending()
+
+                            val episodes = (1..maxEp).map { epNum ->
+                                EpisodeItem(
+                                    episodeNumber = epNum,
+                                    title = "Episode $epNum",
+                                    duration = "45m",
+                                    stillUrl = item.stillsUrl ?: item.coverUrl
+                                )
+                            }
+
+                            seasonsList.add(
+                                SeasonDetail(
+                                    seasonNumber = seNum,
+                                    maxEpisodes = maxEp,
+                                    resolutions = resList,
+                                    episodes = episodes
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        val streams = extractStream(subjectId)
+        val finalTrailer = item.trailerUrl ?: streams.trailerUrl
+
+        SubjectDetailResult(
+            subjectId = item.subjectId,
+            title = item.title,
+            description = item.description,
+            coverUrl = item.coverUrl,
+            stillsUrl = item.stillsUrl,
+            trailerUrl = finalTrailer,
+            score = item.score,
+            releaseDate = item.releaseDate,
+            detectedLang = item.detectedLang,
+            subjectType = item.subjectType,
+            seasons = seasonsList,
+            streams = streams
+        )
     }
 
     suspend fun extractStream(subjectId: String): StreamResolution = withContext(Dispatchers.IO) {

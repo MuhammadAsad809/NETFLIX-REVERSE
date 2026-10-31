@@ -93,6 +93,9 @@ fun NetflixVideoPlayer(
     var currentPosition by remember { mutableLongStateOf(0L) }
     var totalDuration by remember { mutableLongStateOf(0L) }
 
+    var selectedQuality by remember { mutableStateOf("1080p") }
+    var showQualityMenu by remember { mutableStateOf(false) }
+
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(streamUrl))
@@ -190,8 +193,54 @@ fun NetflixVideoPlayer(
                         text = title,
                         color = Color.White,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
                     )
+
+                    // Quality Selector Button & Menu
+                    Box {
+                        Surface(
+                            color = Color(0x66000000),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x66FFFFFF)),
+                            modifier = Modifier.clickable { showQualityMenu = true }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = selectedQuality,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = showQualityMenu,
+                            onDismissRequest = { showQualityMenu = false },
+                            modifier = Modifier.background(Color(0xFF222222))
+                        ) {
+                            listOf("1080p Full HD", "720p HD", "480p SD", "Auto").forEach { qName ->
+                                val qKey = qName.split(" ")[0]
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = qName,
+                                            color = if (selectedQuality == qKey) NetflixColors.NetflixRed else Color.White,
+                                            fontWeight = if (selectedQuality == qKey) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        selectedQuality = qKey
+                                        showQualityMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // Center Action Controls (-10s | Play/Pause | +10s)

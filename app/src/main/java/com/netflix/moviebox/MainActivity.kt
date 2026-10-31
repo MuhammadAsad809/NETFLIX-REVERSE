@@ -134,7 +134,7 @@ fun MainAppScaffold() {
                         onPlayMovie = { movie ->
                             coroutineScope.launch {
                                 val stream = MovieBoxClient.extractStream(movie.subjectId)
-                                val url = stream.fullStreamUrl ?: stream.trailerUrl
+                                val url = stream.fullStreamUrl ?: stream.trailerUrl ?: movie.trailerUrl
                                 if (url != null) {
                                     PlayerActivity.launch(context, url, movie.title)
                                 } else {
