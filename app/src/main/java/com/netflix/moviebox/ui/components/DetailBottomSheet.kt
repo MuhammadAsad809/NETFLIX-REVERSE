@@ -13,16 +13,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 import coil.compose.AsyncImage
 import com.netflix.moviebox.R
 import com.netflix.moviebox.api.EpisodeItem
@@ -46,6 +50,7 @@ fun DetailBottomSheet(
     // Current movie release (switchable via language selector)
     var currentMovie by remember(movie.subjectId) { mutableStateOf(movie) }
     var languageReleases by remember { mutableStateOf<List<MovieBoxItem>>(emptyList()) }
+    var recommendations by remember { mutableStateOf<List<MovieBoxItem>>(emptyList()) }
     var detailResult by remember { mutableStateOf<SubjectDetailResult?>(null) }
     var isLoadingDetail by remember { mutableStateOf(true) }
     var selectedSeasonIndex by remember { mutableIntStateOf(0) }
@@ -54,11 +59,12 @@ fun DetailBottomSheet(
     var isResolvingPlay by remember { mutableStateOf(false) }
     var resolvingEpisodeNumber by remember { mutableStateOf<Int?>(null) }
 
-    // Fetch movie details on currentMovie change
+    // Fetch movie details and recommendations on currentMovie change
     LaunchedEffect(currentMovie.subjectId) {
         isLoadingDetail = true
         selectedSeasonIndex = 0
         detailResult = MovieBoxClient.getSubjectDetail(currentMovie.subjectId)
+        recommendations = MovieBoxClient.getDetailRecommendations(currentMovie.subjectId)
         isLoadingDetail = false
     }
 
@@ -435,6 +441,95 @@ fun DetailBottomSheet(
                 fontSize = 13.sp,
                 lineHeight = 18.sp
             )
+
+            // 9. More Like This (Related Titles)
+            if (recommendations.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(20.dp))
+                Text(
+                    text = "More Like This",
+                    color = NetflixColors.PureWhite,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(recommendations) { recItem ->
+                        Column(
+                            modifier = Modifier
+                                .width(105.dp)
+                                .clickable {
+                                    currentMovie = recItem
+                                }
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(105.dp)
+                                    .height(150.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF222222))
+                            ) {
+                                AsyncImage(
+                                    model = recItem.coverUrl,
+                                    contentDescription = recItem.title,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Surface(
+                                    color = Color(0xFF00D26A),
+                                    shape = RoundedCornerShape(bottomEnd = 6.dp),
+                                    modifier = Modifier.align(Alignment.TopStart)
+                                ) {
+                                    Text(
+                                        text = "Limited Free",
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                    )
+                                }
+                                if (recItem.score > 0.0) {
+                                    Surface(
+                                        color = Color.Black.copy(alpha = 0.75f),
+                                        shape = RoundedCornerShape(topStart = 6.dp),
+                                        modifier = Modifier.align(Alignment.BottomEnd)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Star,
+                                                contentDescription = null,
+                                                tint = Color(0xFFFFB800),
+                                                modifier = Modifier.size(9.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(2.dp))
+                                            Text(
+                                                text = String.format(Locale.US, "%.1f", recItem.score),
+                                                color = Color.White,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = recItem.title,
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
         }

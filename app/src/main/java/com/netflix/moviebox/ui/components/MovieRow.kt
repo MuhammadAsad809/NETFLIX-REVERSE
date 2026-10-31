@@ -1,16 +1,18 @@
 package com.netflix.moviebox.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -21,6 +23,7 @@ import com.netflix.moviebox.api.MovieBoxItem
 import com.netflix.moviebox.data.HomeCategory
 import com.netflix.moviebox.ui.theme.NetflixColors
 import com.netflix.moviebox.ui.theme.NetflixDimens
+import java.util.Locale
 
 @Composable
 fun MovieRow(
@@ -64,13 +67,13 @@ fun StandardMovieCard(
     movie: MovieBoxItem,
     onClick: () -> Unit
 ) {
-    Card(
+    Box(
         modifier = Modifier
             .width(NetflixDimens.PosterWidth)
             .height(NetflixDimens.PosterHeight)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(NetflixDimens.PosterCornerRadius),
-        colors = CardDefaults.cardColors(containerColor = NetflixColors.CardSurface)
+            .clip(RoundedCornerShape(NetflixDimens.PosterCornerRadius))
+            .background(NetflixColors.CardSurface)
+            .clickable(onClick = onClick)
     ) {
         AsyncImage(
             model = movie.coverUrl,
@@ -78,6 +81,49 @@ fun StandardMovieCard(
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
         )
+
+        // Top-left: Limited Free Badge
+        Surface(
+            color = Color(0xFF00D26A),
+            shape = RoundedCornerShape(bottomEnd = 4.dp),
+            modifier = Modifier.align(Alignment.TopStart)
+        ) {
+            Text(
+                text = "Limited Free",
+                color = Color.White,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            )
+        }
+
+        // Bottom-right: Rating Badge
+        if (movie.score > 0.0) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.75f),
+                shape = RoundedCornerShape(topStart = 4.dp),
+                modifier = Modifier.align(Alignment.BottomEnd)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = null,
+                        tint = Color(0xFFFFB800),
+                        modifier = Modifier.size(9.dp)
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text(
+                        text = String.format(Locale.US, "%.1f", movie.score),
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -102,12 +148,12 @@ fun RankedMovieCard(
             modifier = Modifier.offset(x = 10.dp)
         )
 
-        Card(
+        Box(
             modifier = Modifier
                 .width(NetflixDimens.Top10PosterWidth)
-                .fillMaxHeight(),
-            shape = RoundedCornerShape(NetflixDimens.PosterCornerRadius),
-            colors = CardDefaults.cardColors(containerColor = NetflixColors.CardSurface)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(NetflixDimens.PosterCornerRadius))
+                .background(NetflixColors.CardSurface)
         ) {
             AsyncImage(
                 model = movie.coverUrl,
@@ -115,6 +161,49 @@ fun RankedMovieCard(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
+
+            // Top-left: Limited Free Badge
+            Surface(
+                color = Color(0xFF00D26A),
+                shape = RoundedCornerShape(bottomEnd = 4.dp),
+                modifier = Modifier.align(Alignment.TopStart)
+            ) {
+                Text(
+                    text = "Limited Free",
+                    color = Color.White,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+
+            // Bottom-right: Rating Badge
+            if (movie.score > 0.0) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.75f),
+                    shape = RoundedCornerShape(topStart = 4.dp),
+                    modifier = Modifier.align(Alignment.BottomEnd)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Star,
+                            contentDescription = null,
+                            tint = Color(0xFFFFB800),
+                            modifier = Modifier.size(9.dp)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            text = String.format(Locale.US, "%.1f", movie.score),
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
     }
 }

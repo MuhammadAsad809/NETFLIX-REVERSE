@@ -78,14 +78,14 @@ object MovieBoxRepository {
             }
         }
 
-        // 2. Fallback to search queries if feed was empty
+        // 2. Fallback to catalog filtering if feed was empty
         if (list.isEmpty()) {
-            val trendingDeferred = async { MovieBoxClient.searchMovies("Trending", page = 1, perPage = 12) }
-            val top10Deferred = async { MovieBoxClient.searchMovies("Top", page = 1, perPage = 10) }
-            val tvSeriesDeferred = async { MovieBoxClient.searchMovies("Series", subjectType = 2, page = 1, perPage = 12) }
-            val blockbusterDeferred = async { MovieBoxClient.searchMovies("Marvel", subjectType = 1, page = 1, perPage = 12) }
-            val animeDeferred = async { MovieBoxClient.searchMovies("Anime", subjectType = 6, page = 1, perPage = 12) }
-            val actionDeferred = async { MovieBoxClient.searchMovies("Action", page = 1, perPage = 12) }
+            val trendingDeferred = async { MovieBoxClient.searchMovies("Trending", maxPages = 2) }
+            val top10Deferred = async { MovieBoxClient.searchMovies("Top", maxPages = 2) }
+            val tvSeriesDeferred = async { MovieBoxClient.getFilteredCatalog(subjectType = 2, perPage = 24) }
+            val blockbusterDeferred = async { MovieBoxClient.getFilteredCatalog(subjectType = 1, perPage = 24) }
+            val animeDeferred = async { MovieBoxClient.getFilteredCatalog(genre = "Anime", perPage = 24) }
+            val actionDeferred = async { MovieBoxClient.searchMovies("Action", maxPages = 2) }
 
             val trending = trendingDeferred.await()
             val top10 = top10Deferred.await()

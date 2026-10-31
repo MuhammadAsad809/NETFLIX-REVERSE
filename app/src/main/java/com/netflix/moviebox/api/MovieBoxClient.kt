@@ -1,6 +1,8 @@
 package com.netflix.moviebox.api
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -137,7 +139,8 @@ object MovieBoxClient {
         subjectType: Int = 0,
         langFilter: String = "",
         page: Int = 1,
-        perPage: Int = 16
+        perPage: Int = 30,
+        maxPages: Int = 3
     ): List<MovieBoxItem> = withContext(Dispatchers.IO) {
         var searchTerm = keyword.trim()
         if (langFilter.equals("Hindi", ignoreCase = true) && !searchTerm.lowercase().contains("hindi")) {
@@ -146,6 +149,33 @@ object MovieBoxClient {
             searchTerm = "$searchTerm Urdu"
         }
 
+        // Concurrently fetch pages 1..maxPages to ensure sparse backend pagination doesn't drop results
+        val pagesToFetch = if (page == 1 && maxPages > 1) (1..maxPages).toList() else listOf(page)
+        val deferreds = pagesToFetch.map { p ->
+            async {
+                fetchSingleSearchPage(searchTerm, subjectType, p, perPage)
+            }
+        }
+        val allItems = deferreds.awaitAll().flatten()
+
+        val result = mutableListOf<MovieBoxItem>()
+        val seen = HashSet<String>()
+        for (item in allItems) {
+            if (item.subjectId.isNotBlank() && seen.add(item.subjectId)) {
+                if (langFilter.isEmpty() || item.detectedLang.equals(langFilter, ignoreCase = true)) {
+                    result.add(item)
+                }
+            }
+        }
+        result
+    }
+
+    private fun fetchSingleSearchPage(
+        searchTerm: String,
+        subjectType: Int,
+        page: Int,
+        perPage: Int
+    ): List<MovieBoxItem> {
         val url = "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/search"
         val payload = JSONObject().apply {
             put("keyword", searchTerm)
@@ -164,23 +194,110 @@ object MovieBoxClient {
 
         try {
             client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val bodyStr = response.body?.string() ?: return emptyList()
+                val root = JSONObject(bodyStr)
+                val itemsArr = root.optJSONObject("data")?.optJSONArray("items") ?: return emptyList()
+
+                val list = mutableListOf<MovieBoxItem>()
+                for (i in 0 until itemsArr.length()) {
+                    val obj = itemsArr.getJSONObject(i)
+                    list.add(parseMovieBoxItemFromJson(obj))
+                }
+                return list
+            }
+        } catch (e: Exception) {
+            return emptyList()
+        }
+    }
+
+    suspend fun getFilteredCatalog(
+        subjectType: Int = 0,
+        genre: String = "",
+        page: Int = 1,
+        perPage: Int = 30
+    ): List<MovieBoxItem> = withContext(Dispatchers.IO) {
+        val url = "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/filter"
+        val payload = JSONObject().apply {
+            if (subjectType > 0) put("subjectType", subjectType)
+            if (genre.isNotBlank()) put("genre", genre)
+            put("page", page)
+            put("perPage", perPage)
+        }.toString()
+
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .post(payload.toRequestBody("application/json".toMediaType()))
+
+        getApiHeaders().forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+
+        try {
+            client.newCall(reqBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) return@withContext emptyList()
                 val bodyStr = response.body?.string() ?: return@withContext emptyList()
                 val root = JSONObject(bodyStr)
                 val itemsArr = root.optJSONObject("data")?.optJSONArray("items") ?: return@withContext emptyList()
 
-                val result = mutableListOf<MovieBoxItem>()
+                val list = mutableListOf<MovieBoxItem>()
+                for (i in 0 until itemsArr.length()) {
+                    val obj = itemsArr.getJSONObject(i)
+                    list.add(parseMovieBoxItemFromJson(obj))
+                }
+                list
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    suspend fun getEveryoneSearch(): List<String> = withContext(Dispatchers.IO) {
+        val url = "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/everyone-search"
+        val reqBuilder = Request.Builder().url(url).get()
+        getApiHeaders().forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+
+        try {
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val bodyStr = response.body?.string() ?: return@withContext emptyList()
+                val root = JSONObject(bodyStr)
+                val arr = root.optJSONObject("data")?.optJSONArray("everyoneSearch") ?: return@withContext emptyList()
+
+                val keywords = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val title = arr.getJSONObject(i).optString("title", "").trim()
+                    if (title.isNotBlank()) keywords.add(title)
+                }
+                keywords
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    suspend fun getDetailRecommendations(subjectId: String): List<MovieBoxItem> = withContext(Dispatchers.IO) {
+        if (subjectId.isBlank()) return@withContext emptyList()
+        val url = "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/detail-rec?subjectId=$subjectId"
+        val reqBuilder = Request.Builder().url(url).get()
+        getApiHeaders().forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+
+        try {
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val bodyStr = response.body?.string() ?: return@withContext emptyList()
+                val root = JSONObject(bodyStr)
+                val itemsArr = root.optJSONObject("data")?.optJSONArray("items") ?: return@withContext emptyList()
+
+                val list = mutableListOf<MovieBoxItem>()
                 for (i in 0 until itemsArr.length()) {
                     val obj = itemsArr.getJSONObject(i)
                     val item = parseMovieBoxItemFromJson(obj)
-                    if (langFilter.isEmpty() || item.detectedLang.equals(langFilter, ignoreCase = true)) {
-                        result.add(item)
+                    if (item.subjectId != subjectId) {
+                        list.add(item)
                     }
                 }
-                result
+                list
             }
         } catch (e: Exception) {
-            e.printStackTrace()
             emptyList()
         }
     }
