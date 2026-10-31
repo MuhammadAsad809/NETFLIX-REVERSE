@@ -23,13 +23,17 @@ class SoundManager(context: Context) {
             .setAudioAttributes(audioAttributes)
             .build()
 
-        // Load extracted 48kHz Vorbis OGG sounds
+        // Load extracted 48kHz Vorbis OGG & iconic Ta-Dum sound
         try {
             tickSoundId = soundPool.load(context, R.raw.brf, 1)
             popSoundId = soundPool.load(context, R.raw.brg, 1)
-            chimeSoundId = soundPool.load(context, R.raw.brh, 1)
+            chimeSoundId = soundPool.load(context, R.raw.ta_dum, 1)
         } catch (e: Exception) {
-            e.printStackTrace()
+            try {
+                chimeSoundId = soundPool.load(context, R.raw.brh, 1)
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+            }
         }
     }
 
