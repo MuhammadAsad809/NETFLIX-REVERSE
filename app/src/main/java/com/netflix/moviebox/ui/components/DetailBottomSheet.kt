@@ -71,7 +71,7 @@ fun DetailBottomSheet(
                     .height(200.dp)
             ) {
                 AsyncImage(
-                    model = movie.coverUrl,
+                    model = movie.stillsUrl ?: movie.coverUrl,
                     contentDescription = movie.title,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop

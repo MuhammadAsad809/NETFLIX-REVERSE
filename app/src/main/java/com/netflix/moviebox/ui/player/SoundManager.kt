@@ -37,6 +37,9 @@ class SoundManager(context: Context) {
         }
     }
 
+    private val appContext = context.applicationContext
+    private var chimePlayer: android.media.MediaPlayer? = null
+
     fun playTick() {
         if (tickSoundId != 0) soundPool.play(tickSoundId, 0.6f, 0.6f, 1, 0, 1.0f)
     }
@@ -46,10 +49,27 @@ class SoundManager(context: Context) {
     }
 
     fun playChime() {
-        if (chimeSoundId != 0) soundPool.play(chimeSoundId, 1.0f, 1.0f, 1, 0, 1.0f)
+        try {
+            chimePlayer?.release()
+            chimePlayer = android.media.MediaPlayer.create(appContext, R.raw.ta_dum).apply {
+                setOnCompletionListener { mp ->
+                    mp.release()
+                    if (chimePlayer == mp) chimePlayer = null
+                }
+                start()
+            }
+        } catch (e: Exception) {
+            if (chimeSoundId != 0) soundPool.play(chimeSoundId, 1.0f, 1.0f, 1, 0, 1.0f)
+        }
     }
 
     fun release() {
+        try {
+            chimePlayer?.release()
+            chimePlayer = null
+        } catch (e: Exception) {
+            // ignore
+        }
         soundPool.release()
     }
 }

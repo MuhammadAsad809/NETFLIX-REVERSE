@@ -34,25 +34,37 @@ fun SearchScreen(
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    var selectedLang by remember { mutableStateOf("All") }
+    var selectedCategory by remember { mutableStateOf("All") }
     var searchResults by remember { mutableStateOf<List<MovieBoxItem>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
 
-    val languages = listOf("All", "Hindi", "Urdu", "Dual Audio", "English")
+    val categories = listOf("All", "Movies", "TV Shows", "Anime")
+
+    val subjectType = when (selectedCategory) {
+        "Movies" -> 1
+        "TV Shows" -> 2
+        "Anime" -> 6
+        else -> 0
+    }
 
     // Debounced Search Effect
-    LaunchedEffect(searchQuery, selectedLang) {
-        if (searchQuery.trim().length >= 2) {
-            delay(400)
+    LaunchedEffect(searchQuery, selectedCategory) {
+        val q = searchQuery.trim()
+        if (q.length >= 2) {
+            delay(350)
             isSearching = true
-            val lang = if (selectedLang == "All") "" else selectedLang
-            searchResults = MovieBoxClient.searchMovies(searchQuery, langFilter = lang)
+            searchResults = MovieBoxClient.searchMovies(q, subjectType = subjectType)
             isSearching = false
-        } else if (searchQuery.isEmpty()) {
+        } else if (q.isEmpty()) {
             // Default discover results
             isSearching = true
-            val lang = if (selectedLang == "All") "" else selectedLang
-            searchResults = MovieBoxClient.searchMovies("2024", langFilter = lang)
+            val defaultTerm = when (selectedCategory) {
+                "Movies" -> "Marvel"
+                "TV Shows" -> "Series"
+                "Anime" -> "Anime"
+                else -> "Trending"
+            }
+            searchResults = MovieBoxClient.searchMovies(defaultTerm, subjectType = subjectType)
             isSearching = false
         }
     }
@@ -68,7 +80,7 @@ fun SearchScreen(
         TextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Search movies, genres, Hindi dubbed...", color = NetflixColors.TextSecondary) },
+            placeholder = { Text("Search movies, TV shows, anime...", color = NetflixColors.TextSecondary) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = NetflixColors.TextMuted) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
@@ -92,16 +104,16 @@ fun SearchScreen(
                 .padding(vertical = 12.dp)
         )
 
-        // 2. Language Filter Chips
+        // 2. Category Filter Chips (All, Movies, TV Shows, Anime)
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(bottom = 14.dp)
         ) {
-            items(languages) { lang ->
+            items(categories) { cat ->
                 FilterChip(
-                    selected = (selectedLang == lang),
-                    onClick = { selectedLang = lang },
-                    label = { Text(lang, fontSize = 12.sp) },
+                    selected = (selectedCategory == cat),
+                    onClick = { selectedCategory = cat },
+                    label = { Text(cat, fontSize = 12.sp) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = NetflixColors.NetflixRed,
                         selectedLabelColor = Color.White,

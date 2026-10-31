@@ -15,11 +15,14 @@ data class MovieBoxItem(
     val subjectId: String,
     val title: String,
     val coverUrl: String,
+    val stillsUrl: String? = null,
     val score: Double = 8.5,
     val releaseDate: String = "2024",
     val description: String = "",
     val detectedLang: String = "English",
-    val duration: String = "2h 10m"
+    val duration: String = "2h 10m",
+    val genre: String = "",
+    val subjectType: Int = 1
 )
 
 data class StreamResolution(
@@ -74,6 +77,7 @@ object MovieBoxClient {
 
     suspend fun searchMovies(
         keyword: String,
+        subjectType: Int = 0,
         langFilter: String = "",
         page: Int = 1,
         perPage: Int = 16
@@ -88,6 +92,9 @@ object MovieBoxClient {
         val url = "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/search"
         val payload = JSONObject().apply {
             put("keyword", searchTerm)
+            if (subjectType > 0) {
+                put("subjectType", subjectType)
+            }
             put("page", page)
             put("perPage", perPage)
         }.toString()
@@ -110,20 +117,51 @@ object MovieBoxClient {
                     val obj = itemsArr.getJSONObject(i)
                     val id = obj.optString("subjectId", obj.optString("id", ""))
                     val title = obj.optString("title", "")
-                    val cover = obj.optString("coverUrl", obj.optString("cover", ""))
-                    val score = obj.optDouble("score", 8.4)
-                    val release = obj.optString("releaseDate", "2024")
+
+                    // Extract cover and stills URLs correctly from nested JSON objects
+                    val coverObj = obj.optJSONObject("cover")
+                    val stillsObj = obj.optJSONObject("stills")
+                    val cover = coverObj?.optString("url")?.takeIf { it.isNotBlank() }
+                        ?: obj.optString("coverUrl").takeIf { it.isNotBlank() }
+                        ?: obj.optString("cover").takeIf { it.isNotBlank() }
+                        ?: stillsObj?.optString("url")
+                        ?: ""
+
+                    val stills = stillsObj?.optString("url")?.takeIf { it.isNotBlank() }
+
+                    val ratingStr = obj.optString("imdbRatingValue", "")
+                    val score = if (ratingStr.isNotBlank()) {
+                        ratingStr.toDoubleOrNull() ?: 8.4
+                    } else {
+                        obj.optDouble("score", 8.4)
+                    }
+
+                    val release = obj.optString("releaseDate", "2024").let {
+                        if (it.length >= 4) it.substring(0, 4) else "2024"
+                    }
                     val desc = obj.optString("description", "")
                     val lang = detectLanguage(title)
+                    val durationSec = obj.optInt("duration", 0)
+                    val durationStr = if (durationSec > 0) {
+                        val hrs = durationSec / 3600
+                        val mins = (durationSec % 3600) / 60
+                        if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
+                    } else "2h 10m"
+                    val genre = obj.optString("genre", "")
+                    val st = obj.optInt("subjectType", 1)
 
                     val item = MovieBoxItem(
                         subjectId = id,
                         title = title,
                         coverUrl = cover,
+                        stillsUrl = stills,
                         score = score,
                         releaseDate = release,
                         description = desc,
-                        detectedLang = lang
+                        detectedLang = lang,
+                        duration = durationStr,
+                        genre = genre,
+                        subjectType = st
                     )
 
                     if (langFilter.isEmpty() || lang.equals(langFilter, ignoreCase = true)) {

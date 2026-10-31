@@ -22,12 +22,17 @@ object MovieBoxRepository {
     suspend fun getFeaturedHero(): MovieBoxItem = withContext(Dispatchers.IO) {
         cachedHero?.let { return@withContext it }
 
-        // Fetch top trending item from MovieBox
-        val trending = MovieBoxClient.searchMovies("Avatar", page = 1, perPage = 1)
-        val hero = trending.firstOrNull() ?: MovieBoxItem(
+        // Fetch top trending item with wide backdrop from MovieBox
+        val items = MovieBoxClient.searchMovies("Trending", page = 1, perPage = 6)
+        val heroCandidate = items.firstOrNull { !it.stillsUrl.isNullOrEmpty() }
+            ?: items.firstOrNull { it.coverUrl.isNotEmpty() }
+            ?: MovieBoxClient.searchMovies("Avatar", page = 1, perPage = 1).firstOrNull()
+
+        val hero = heroCandidate ?: MovieBoxItem(
             subjectId = "hero-default",
             title = "Avatar: The Way of Water",
-            coverUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1000&q=80",
+            coverUrl = "https://pbcdnw.aoneroom.com/image/2026/01/27/e9297d39584c33b5ded66cff74a31dc8.jpg",
+            stillsUrl = "https://pbcdnw.aoneroom.com/image/2022/09/09/1bb7aa281a086492c0b2a0eb354bb4bc.jpg",
             score = 9.2,
             releaseDate = "2024",
             description = "Jake Sully lives with his newfound family formed on the extrasolar moon Pandora. Once a familiar threat returns to finish what was previously started, Jake must work with Neytiri and the army of the Na'vi race to protect their home.",
@@ -40,17 +45,19 @@ object MovieBoxRepository {
     suspend fun getHomeCategories(): List<HomeCategory> = withContext(Dispatchers.IO) {
         if (cachedCategories.isNotEmpty()) return@withContext cachedCategories
 
-        val trendingDeferred = async { MovieBoxClient.searchMovies("Action", page = 1, perPage = 10) }
-        val top10Deferred = async { MovieBoxClient.searchMovies("2024", page = 1, perPage = 10) }
-        val hindiDeferred = async { MovieBoxClient.searchMovies("Hindi", langFilter = "Hindi", page = 1, perPage = 10) }
-        val urduDeferred = async { MovieBoxClient.searchMovies("Urdu", langFilter = "Urdu", page = 1, perPage = 8) }
-        val sciFiDeferred = async { MovieBoxClient.searchMovies("Marvel", page = 1, perPage = 10) }
+        val trendingDeferred = async { MovieBoxClient.searchMovies("Trending", page = 1, perPage = 12) }
+        val top10Deferred = async { MovieBoxClient.searchMovies("Top", page = 1, perPage = 10) }
+        val tvSeriesDeferred = async { MovieBoxClient.searchMovies("Series", subjectType = 2, page = 1, perPage = 12) }
+        val blockbusterDeferred = async { MovieBoxClient.searchMovies("Marvel", subjectType = 1, page = 1, perPage = 12) }
+        val animeDeferred = async { MovieBoxClient.searchMovies("Anime", subjectType = 6, page = 1, perPage = 12) }
+        val actionDeferred = async { MovieBoxClient.searchMovies("Action", page = 1, perPage = 12) }
 
         val trending = trendingDeferred.await()
         val top10 = top10Deferred.await()
-        val hindi = hindiDeferred.await()
-        val urdu = urduDeferred.await()
-        val sciFi = sciFiDeferred.await()
+        val tvSeries = tvSeriesDeferred.await()
+        val blockbuster = blockbusterDeferred.await()
+        val anime = animeDeferred.await()
+        val action = actionDeferred.await()
 
         val list = mutableListOf<HomeCategory>()
 
@@ -58,16 +65,19 @@ object MovieBoxRepository {
             list.add(HomeCategory("trending", "Trending Now", isRanked = false, trending))
         }
         if (top10.isNotEmpty()) {
-            list.add(HomeCategory("top10", "Top 10 in Your Country Today", isRanked = true, top10))
+            list.add(HomeCategory("top10", "Top 10 Today", isRanked = true, top10))
         }
-        if (hindi.isNotEmpty()) {
-            list.add(HomeCategory("hindi", "Bollywood & Hindi Dubbed", isRanked = false, hindi))
+        if (tvSeries.isNotEmpty()) {
+            list.add(HomeCategory("series", "Popular TV Series", isRanked = false, tvSeries))
         }
-        if (urdu.isNotEmpty()) {
-            list.add(HomeCategory("urdu", "Urdu Dubbed Hits", isRanked = false, urdu))
+        if (blockbuster.isNotEmpty()) {
+            list.add(HomeCategory("blockbusters", "Blockbuster Movies", isRanked = false, blockbuster))
         }
-        if (sciFi.isNotEmpty()) {
-            list.add(HomeCategory("scifi", "Sci-Fi & Superhero Action", isRanked = false, sciFi))
+        if (anime.isNotEmpty()) {
+            list.add(HomeCategory("anime", "Anime & Animation", isRanked = false, anime))
+        }
+        if (action.isNotEmpty()) {
+            list.add(HomeCategory("action", "Action & Adventure", isRanked = false, action))
         }
 
         cachedCategories = list

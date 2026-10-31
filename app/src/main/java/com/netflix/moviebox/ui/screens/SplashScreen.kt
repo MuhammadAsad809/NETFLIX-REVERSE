@@ -26,19 +26,32 @@ fun SplashScreen(
     )
     val progress by animateLottieCompositionAsState(
         composition = composition,
-        iterations = 1
+        iterations = 1,
+        restartOnPlay = false
     )
 
-    // Trigger studio chime sound on launch
+    var finished by remember { mutableStateOf(false) }
+
+    // Trigger iconic studio Ta-Dum sound on launch
     LaunchedEffect(Unit) {
-        delay(200)
+        delay(150)
         soundManager.playChime()
     }
 
-    // When 2.0s animation finishes, transition to Home
+    // When 2.0s animation finishes smoothly, transition to Home
     LaunchedEffect(progress) {
-        if (progress == 1f) {
-            delay(300)
+        if (progress >= 0.98f && !finished) {
+            finished = true
+            delay(350)
+            onSplashFinished()
+        }
+    }
+
+    // Safety fallback timeout to guarantee transition even on slow devices
+    LaunchedEffect(Unit) {
+        delay(2600)
+        if (!finished) {
+            finished = true
             onSplashFinished()
         }
     }
@@ -56,7 +69,7 @@ fun SplashScreen(
         LottieAnimation(
             composition = composition,
             progress = { progress },
-            modifier = Modifier.size(160.dp)
+            modifier = Modifier.size(200.dp)
         )
     }
 }

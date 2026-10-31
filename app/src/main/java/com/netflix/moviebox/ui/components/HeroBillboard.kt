@@ -48,9 +48,9 @@ fun HeroBillboard(
             .fillMaxWidth()
             .height(NetflixDimens.HeroHeight)
     ) {
-        // 1. Poster Backdrop
+        // 1. Poster Backdrop (prefer wide stills backdrop)
         AsyncImage(
-            model = movie.coverUrl,
+            model = movie.stillsUrl ?: movie.coverUrl,
             contentDescription = movie.title,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
