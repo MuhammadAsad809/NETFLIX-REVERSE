@@ -39,6 +39,22 @@ data class StreamResolution(
     val allStreams: List<String>
 )
 
+data class PlayStreamItem(
+    val format: String,
+    val resolution: String,
+    val url: String,
+    val durationSec: Int,
+    val size: Long = 0L,
+    val codecName: String = "h264"
+)
+
+data class PlayResult(
+    val hasResource: Boolean,
+    val durationSec: Int,
+    val streams: List<PlayStreamItem>,
+    val bestStreamUrl: String?
+)
+
 data class EpisodeItem(
     val episodeNumber: Int,
     val title: String,
@@ -48,6 +64,7 @@ data class EpisodeItem(
 
 data class SeasonDetail(
     val seasonNumber: Int,
+    val title: String = "Season $seasonNumber",
     val maxEpisodes: Int,
     val resolutions: List<Int>,
     val episodes: List<EpisodeItem>
@@ -64,6 +81,7 @@ data class SubjectDetailResult(
     val releaseDate: String,
     val detectedLang: String,
     val subjectType: Int,
+    val detailPath: String = "",
     val seasons: List<SeasonDetail>,
     val streams: StreamResolution
 )
@@ -268,6 +286,7 @@ object MovieBoxClient {
                                 val release = subObj?.optString("releaseDate")?.take(4) ?: "2024"
                                 val desc = subObj?.optString("description") ?: ""
                                 val stType = subObj?.optInt("subjectType", 1) ?: 1
+                                val bDetailPath = bObj.optString("detailPath").ifBlank { subObj?.optString("detailPath", "") ?: "" }
 
                                 heroList.add(
                                     MovieBoxItem(
@@ -282,7 +301,8 @@ object MovieBoxClient {
                                         detectedLang = detectLanguage(bTitle),
                                         duration = "2h 15m",
                                         genre = subObj?.optString("genre") ?: "Featured, Action",
-                                        subjectType = stType
+                                        subjectType = stType,
+                                        detailPath = bDetailPath
                                     )
                                 )
                             }
@@ -358,11 +378,18 @@ object MovieBoxClient {
 
                     val resourceObj = dataObj?.optJSONObject("resource")
                     val seasonsArr = resourceObj?.optJSONArray("seasons")
-                    if (seasonsArr != null) {
+                    val isAnime = item.title.contains("naruto", ignoreCase = true) ||
+                            item.genre.contains("Anime", ignoreCase = true) ||
+                            item.genre.contains("Animation", ignoreCase = true)
+                    val defaultDur = if (isAnime) "24m" else "45m"
+
+                    if (seasonsArr != null && seasonsArr.length() > 0) {
+                        data class RawSeason(val se: Int, val maxEp: Int, val resolutions: List<Int>)
+                        val rawList = mutableListOf<RawSeason>()
+
                         for (i in 0 until seasonsArr.length()) {
                             val sObj = seasonsArr.getJSONObject(i)
                             val maxEp = sObj.optInt("maxEp", 0)
-                            // Filter out movies with maxEp = 0
                             if (maxEp <= 0) continue
 
                             val seNum = sObj.optInt("se", i + 1)
@@ -381,26 +408,66 @@ object MovieBoxClient {
                                 resList.addAll(listOf(1080, 720, 480))
                             }
                             resList.sortDescending()
+                            rawList.add(RawSeason(seNum, maxEp, resList))
+                        }
 
-                            val episodes = (1..maxEp).map { epNum ->
-                                // Compute realistic, distinct episode duration
-                                val baseDuration = 45 + ((epNum * 7 + seNum * 3) % 16)
-                                EpisodeItem(
-                                    episodeNumber = epNum,
-                                    title = "Episode $epNum",
-                                    duration = "${baseDuration}m",
-                                    stillUrl = item.stillsUrl ?: item.coverUrl
+                        if (rawList.size == 1 && rawList[0].maxEp > 30) {
+                            // Large episode anime / series (e.g. Naruto with 375 episodes in season 1)
+                            // Divide into clean batches of 25 episodes with range tabs
+                            val totalEp = rawList[0].maxEp
+                            val singleSe = rawList[0].se
+                            val resList = rawList[0].resolutions
+                            val batchSize = 25
+                            val batchCount = (totalEp + batchSize - 1) / batchSize
+
+                            for (b in 0 until batchCount) {
+                                val startEp = b * batchSize + 1
+                                val endEp = kotlin.math.min((b + 1) * batchSize, totalEp)
+                                val batchEpisodes = (startEp..endEp).map { epNum ->
+                                    EpisodeItem(
+                                        episodeNumber = epNum,
+                                        title = "Episode $epNum",
+                                        duration = defaultDur,
+                                        stillUrl = item.stillsUrl ?: item.coverUrl
+                                    )
+                                }
+                                seasonsList.add(
+                                    SeasonDetail(
+                                        seasonNumber = singleSe,
+                                        title = "Ep $startEp-$endEp",
+                                        maxEpisodes = totalEp,
+                                        resolutions = resList,
+                                        episodes = batchEpisodes
+                                    )
                                 )
                             }
-
-                            seasonsList.add(
-                                SeasonDetail(
-                                    seasonNumber = seNum,
-                                    maxEpisodes = maxEp,
-                                    resolutions = resList,
-                                    episodes = episodes
+                        } else {
+                            // Standard multi-season series (e.g. Lupin S1-S4, Stranger Things S1-S5)
+                            for (raw in rawList) {
+                                val episodes = (1..raw.maxEp).map { epNum ->
+                                    EpisodeItem(
+                                        episodeNumber = epNum,
+                                        title = "Episode $epNum",
+                                        duration = defaultDur,
+                                        stillUrl = item.stillsUrl ?: item.coverUrl
+                                    )
+                                }
+                                seasonsList.add(
+                                    SeasonDetail(
+                                        seasonNumber = raw.se,
+                                        title = "Season ${raw.se}",
+                                        maxEpisodes = raw.maxEp,
+                                        resolutions = raw.resolutions,
+                                        episodes = episodes
+                                    )
                                 )
-                            )
+                            }
+                        }
+
+                        // Set authentic duration label on item for series
+                        if (seasonsList.isNotEmpty()) {
+                            val durLabel = if (rawList.size > 1) "${rawList.size} Seasons" else "${rawList[0].maxEp} Episodes"
+                            item = item.copy(duration = durLabel, subjectType = 2)
                         }
                     }
                 }
@@ -423,9 +490,99 @@ object MovieBoxClient {
             releaseDate = item.releaseDate,
             detectedLang = item.detectedLang,
             subjectType = item.subjectType,
+            detailPath = item.detailPath,
             seasons = seasonsList,
             streams = streams
         )
+    }
+
+    suspend fun getEpisodePlayStream(
+        subjectId: String,
+        se: Int = 0,
+        ep: Int = 0,
+        detailPath: String = ""
+    ): PlayResult = withContext(Dispatchers.IO) {
+        var realDetailPath = detailPath
+        if (realDetailPath.isBlank()) {
+            try {
+                val dUrl = "https://h5-api.aoneroom.com/wefeed-h5api-bff/detail?subjectId=$subjectId"
+                val dReq = Request.Builder().url(dUrl).get()
+                getApiHeaders().forEach { (k, v) -> dReq.addHeader(k, v) }
+                client.newCall(dReq.build()).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val root = JSONObject(resp.body?.string() ?: "")
+                        realDetailPath = root.optJSONObject("data")?.optJSONObject("subject")?.optString("detailPath", "") ?: ""
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        val playUrl = "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/play?subjectId=$subjectId&se=$se&ep=$ep&detailPath=$realDetailPath&streamSignType=1"
+        val reqBuilder = Request.Builder()
+            .url(playUrl)
+            .get()
+            .addHeader("Origin", "https://themoviebox.xyz")
+            .addHeader("Referer", "https://themoviebox.xyz/en/spa/videoPlayPage/movies/$realDetailPath")
+            .addHeader("X-Vip-Restrict", "0")
+
+        getApiHeaders().forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+
+        try {
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext PlayResult(hasResource = false, durationSec = 0, streams = emptyList(), bestStreamUrl = null)
+                }
+                val bodyStr = response.body?.string() ?: return@withContext PlayResult(false, 0, emptyList(), null)
+                val root = JSONObject(bodyStr)
+                val dataObj = root.optJSONObject("data")
+                val hasResource = dataObj?.optBoolean("hasResource", false) ?: false
+                val streamsArr = dataObj?.optJSONArray("streams")
+
+                val streamList = mutableListOf<PlayStreamItem>()
+                var maxDur = 0
+                if (streamsArr != null) {
+                    for (i in 0 until streamsArr.length()) {
+                        val sObj = streamsArr.getJSONObject(i)
+                        val url = sObj.optString("url", "")
+                        if (url.isNotBlank()) {
+                            val format = sObj.optString("format", "MP4")
+                            val res = sObj.optString("resolutions", "720")
+                            val dur = sObj.optInt("duration", 0)
+                            if (dur > maxDur) maxDur = dur
+                            val size = sObj.optLong("size", 0L)
+                            val codec = sObj.optString("codecName", "h264")
+                            streamList.add(
+                                PlayStreamItem(
+                                    format = format,
+                                    resolution = res,
+                                    url = url,
+                                    durationSec = dur,
+                                    size = size,
+                                    codecName = codec
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Pick 1080p, then 720p, then first available
+                val bestUrl = streamList.firstOrNull { it.resolution.contains("1080") }?.url
+                    ?: streamList.firstOrNull { it.resolution.contains("720") }?.url
+                    ?: streamList.firstOrNull()?.url
+
+                PlayResult(
+                    hasResource = hasResource || streamList.isNotEmpty(),
+                    durationSec = maxDur,
+                    streams = streamList,
+                    bestStreamUrl = bestUrl
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            PlayResult(hasResource = false, durationSec = 0, streams = emptyList(), bestStreamUrl = null)
+        }
     }
 
     suspend fun extractStream(subjectId: String): StreamResolution = withContext(Dispatchers.IO) {

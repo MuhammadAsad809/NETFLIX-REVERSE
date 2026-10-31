@@ -101,6 +101,10 @@ fun NetflixVideoPlayer(
     val exoPlayer = remember {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
+            .setDefaultRequestProperties(mapOf(
+                "Referer" to "https://themoviebox.xyz/",
+                "Origin" to "https://themoviebox.xyz"
+            ))
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(15000)

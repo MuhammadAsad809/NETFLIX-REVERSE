@@ -24,9 +24,13 @@ object MovieDownloader {
     private val _downloadTasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val downloadTasks: StateFlow<List<DownloadTask>> = _downloadTasks
 
-    suspend fun startDownload(context: Context, subjectId: String, movieTitle: String): Boolean = withContext(Dispatchers.IO) {
-        val stream = MovieBoxClient.extractStream(subjectId)
-        val downloadUrl = stream.fullStreamUrl ?: return@withContext false
+    suspend fun startDownload(
+        context: Context,
+        subjectId: String,
+        movieTitle: String,
+        directDownloadUrl: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val downloadUrl = directDownloadUrl ?: MovieBoxClient.extractStream(subjectId).fullStreamUrl ?: return@withContext false
 
         val sanitizedTitle = movieTitle.replace(Regex("[^a-zA-Z0-9.-]"), "_")
         val fileName = "${sanitizedTitle}.mp4"

@@ -133,11 +133,19 @@ fun MainAppScaffold() {
                         onMovieClick = { movie -> selectedMovie = movie },
                         onPlayMovie = { movie ->
                             coroutineScope.launch {
-                                val stream = MovieBoxClient.extractStream(movie.subjectId)
-                                val url = stream.fullStreamUrl ?: stream.trailerUrl ?: movie.trailerUrl
-                                if (url != null) {
-                                    val titleBadge = if (stream.hasFullMovie) "${movie.title} [Full Movie]" else "${movie.title} [Trailer]"
-                                    PlayerActivity.launch(context, url, titleBadge)
+                                val isSeries = movie.subjectType == 2
+                                val playRes = MovieBoxClient.getEpisodePlayStream(
+                                    subjectId = movie.subjectId,
+                                    se = if (isSeries) 1 else 0,
+                                    ep = if (isSeries) 1 else 0,
+                                    detailPath = movie.detailPath
+                                )
+                                val bestUrl = playRes.bestStreamUrl
+                                    ?: MovieBoxClient.extractStream(movie.subjectId).fullStreamUrl
+                                    ?: movie.trailerUrl
+                                if (bestUrl != null) {
+                                    val titleBadge = if (isSeries) "${movie.title} - S1:E1" else "${movie.title} [Full Movie]"
+                                    PlayerActivity.launch(context, bestUrl, titleBadge)
                                 } else {
                                     Toast.makeText(context, "Stream not available", Toast.LENGTH_SHORT).show()
                                 }
@@ -172,7 +180,15 @@ fun MainAppScaffold() {
                     },
                     onDownloadClick = { subjectId, title ->
                         coroutineScope.launch {
-                            val queued = MovieDownloader.startDownload(context, subjectId, title)
+                            val isSeries = currentMovie.subjectType == 2
+                            val playRes = MovieBoxClient.getEpisodePlayStream(
+                                subjectId = subjectId,
+                                se = if (isSeries) 1 else 0,
+                                ep = if (isSeries) 1 else 0,
+                                detailPath = currentMovie.detailPath
+                            )
+                            val resolvedDownloadUrl = playRes.bestStreamUrl ?: MovieBoxClient.extractStream(subjectId).fullStreamUrl
+                            val queued = MovieDownloader.startDownload(context, subjectId, title, directDownloadUrl = resolvedDownloadUrl)
                             if (queued) {
                                 Toast.makeText(context, "Download started for $title", Toast.LENGTH_SHORT).show()
                             } else {

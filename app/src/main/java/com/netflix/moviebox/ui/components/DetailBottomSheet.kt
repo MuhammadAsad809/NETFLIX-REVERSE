@@ -31,6 +31,7 @@ import com.netflix.moviebox.api.MovieBoxItem
 import com.netflix.moviebox.api.SeasonDetail
 import com.netflix.moviebox.api.SubjectDetailResult
 import com.netflix.moviebox.ui.theme.NetflixColors
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,10 +50,14 @@ fun DetailBottomSheet(
     var isLoadingDetail by remember { mutableStateOf(true) }
     var selectedSeasonIndex by remember { mutableIntStateOf(0) }
     var selectedQuality by remember { mutableStateOf("1080p") }
+    val coroutineScope = rememberCoroutineScope()
+    var isResolvingPlay by remember { mutableStateOf(false) }
+    var resolvingEpisodeNumber by remember { mutableStateOf<Int?>(null) }
 
     // Fetch movie details on currentMovie change
     LaunchedEffect(currentMovie.subjectId) {
         isLoadingDetail = true
+        selectedSeasonIndex = 0
         detailResult = MovieBoxClient.getSubjectDetail(currentMovie.subjectId)
         isLoadingDetail = false
     }
@@ -65,6 +70,7 @@ fun DetailBottomSheet(
     val seasons = detailResult?.seasons?.filter { it.maxEpisodes > 0 } ?: emptyList()
     val isSeries = (currentMovie.subjectType == 2 || seasons.isNotEmpty()) && seasons.any { it.maxEpisodes > 0 }
     val activeSeason: SeasonDetail? = seasons.getOrNull(selectedSeasonIndex) ?: seasons.firstOrNull()
+    val activeDetailPath = detailResult?.detailPath?.ifBlank { currentMovie.detailPath } ?: currentMovie.detailPath
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -244,37 +250,68 @@ fun DetailBottomSheet(
 
             // 5. Play Button (Full Movie or First Episode)
             val hasFull = detailResult?.streams?.hasFullMovie == true
-            val streamUrl = if (hasFull) detailResult?.streams?.fullStreamUrl else (detailResult?.streams?.trailerUrl ?: detailResult?.trailerUrl)
+            val staticStreamUrl = if (hasFull) detailResult?.streams?.fullStreamUrl else (detailResult?.streams?.trailerUrl ?: detailResult?.trailerUrl)
 
             Button(
                 onClick = {
-                    if (streamUrl != null) {
-                        val playTitle = "${currentMovie.title} [${selectedQuality}]"
-                        onPlayClick(streamUrl, playTitle)
+                    coroutineScope.launch {
+                        isResolvingPlay = true
+                        try {
+                            val seNum = if (isSeries) (activeSeason?.seasonNumber ?: 1) else 0
+                            val epNum = if (isSeries) (activeSeason?.episodes?.firstOrNull()?.episodeNumber ?: 1) else 0
+                            val playRes = MovieBoxClient.getEpisodePlayStream(
+                                subjectId = currentMovie.subjectId,
+                                se = seNum,
+                                ep = epNum,
+                                detailPath = activeDetailPath
+                            )
+                            val matched = playRes.streams.firstOrNull {
+                                it.resolution.contains(selectedQuality.replace("p", ""))
+                            } ?: playRes.streams.firstOrNull()
+
+                            val finalUrl = matched?.url ?: detailResult?.streams?.fullStreamUrl ?: staticStreamUrl
+                            if (finalUrl != null) {
+                                val playTitle = if (isSeries) {
+                                    "${currentMovie.title} - S${seNum}:E${epNum} [${selectedQuality}]"
+                                } else {
+                                    "${currentMovie.title} [${selectedQuality}]"
+                                }
+                                onPlayClick(finalUrl, playTitle)
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            if (staticStreamUrl != null) onPlayClick(staticStreamUrl, currentMovie.title)
+                        } finally {
+                            isResolvingPlay = false
+                        }
                     }
                 },
-                enabled = !isLoadingDetail && streamUrl != null,
+                enabled = !isLoadingDetail && !isResolvingPlay,
                 colors = ButtonDefaults.buttonColors(containerColor = NetflixColors.PureWhite),
                 shape = RoundedCornerShape(4.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp)
             ) {
-                if (isLoadingDetail) {
+                if (isLoadingDetail || isResolvingPlay) {
                     CircularProgressIndicator(
                         color = Color.Black,
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Resolving Stream...", color = Color.Black, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isResolvingPlay) "Loading Stream ($selectedQuality)..." else "Resolving Stream...",
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold
+                    )
                 } else {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = when {
-                            hasFull -> "▶️ Play Full Movie ($selectedQuality)"
                             isSeries -> "▶️ Play Series ($selectedQuality)"
+                            hasFull -> "▶️ Play Full Movie ($selectedQuality)"
                             else -> "🎬 Watch Trailer ($selectedQuality)"
                         },
                         color = Color.Black,
@@ -291,7 +328,7 @@ fun DetailBottomSheet(
                     val downloadTitle = "${currentMovie.title}_${selectedQuality}"
                     onDownloadClick(currentMovie.subjectId, downloadTitle)
                 },
-                enabled = hasFull,
+                enabled = !isLoadingDetail,
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF262626)),
                 shape = RoundedCornerShape(4.dp),
                 modifier = Modifier
@@ -301,7 +338,7 @@ fun DetailBottomSheet(
                 Icon(Icons.Default.Download, contentDescription = null, tint = NetflixColors.PureWhite)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (hasFull) "⬇️ Download Full Movie ($selectedQuality)" else "⬇️ Download Unavailable",
+                    text = "⬇️ Download ($selectedQuality)",
                     color = NetflixColors.PureWhite,
                     fontWeight = FontWeight.Bold
                 )
@@ -322,12 +359,13 @@ fun DetailBottomSheet(
                 )
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Season Tabs
-                Row(
+                // Season / Range Tabs
+                LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    seasons.forEachIndexed { idx, s ->
+                    items(seasons.size) { idx ->
+                        val s = seasons[idx]
                         val isSeasonSelected = idx == selectedSeasonIndex
                         Surface(
                             color = if (isSeasonSelected) NetflixColors.NetflixRed else Color(0xFF1E1E1E),
@@ -335,7 +373,7 @@ fun DetailBottomSheet(
                             modifier = Modifier.clickable { selectedSeasonIndex = idx }
                         ) {
                             Text(
-                                text = "Season ${s.seasonNumber}",
+                                text = s.title,
                                 color = if (isSeasonSelected) NetflixColors.PureWhite else NetflixColors.TextMuted,
                                 fontSize = 13.sp,
                                 fontWeight = if (isSeasonSelected) FontWeight.Bold else FontWeight.Normal,
@@ -346,16 +384,43 @@ fun DetailBottomSheet(
                 }
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Real Episode List with genuine durations
+                // Real Episode List with genuine live stream resolution
                 val episodeList = activeSeason?.episodes ?: emptyList()
+                val currentSeNum = activeSeason?.seasonNumber ?: 1
                 episodeList.forEach { ep ->
+                    val isEpResolving = resolvingEpisodeNumber == ep.episodeNumber
                     EpisodeRowItem(
                         episode = ep,
-                        seasonNumber = activeSeason?.seasonNumber ?: 1,
+                        seasonNumber = currentSeNum,
                         movieTitle = currentMovie.title,
                         selectedQuality = selectedQuality,
-                        fallbackStreamUrl = streamUrl,
-                        onPlayClick = onPlayClick
+                        isResolving = isEpResolving,
+                        onPlayEpisode = { seNum, epNum ->
+                            coroutineScope.launch {
+                                resolvingEpisodeNumber = epNum
+                                try {
+                                    val playRes = MovieBoxClient.getEpisodePlayStream(
+                                        subjectId = currentMovie.subjectId,
+                                        se = seNum,
+                                        ep = epNum,
+                                        detailPath = activeDetailPath
+                                    )
+                                    val matched = playRes.streams.firstOrNull {
+                                        it.resolution.contains(selectedQuality.replace("p", ""))
+                                    } ?: playRes.streams.firstOrNull()
+
+                                    val finalUrl = matched?.url ?: detailResult?.streams?.fullStreamUrl ?: staticStreamUrl
+                                    if (finalUrl != null) {
+                                        val epTitle = "${currentMovie.title} - S${seNum}:E${epNum} [${selectedQuality}]"
+                                        onPlayClick(finalUrl, epTitle)
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                } finally {
+                                    resolvingEpisodeNumber = null
+                                }
+                            }
+                        }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
@@ -382,19 +447,16 @@ private fun EpisodeRowItem(
     seasonNumber: Int,
     movieTitle: String,
     selectedQuality: String,
-    fallbackStreamUrl: String?,
-    onPlayClick: (streamUrl: String, title: String) -> Unit
+    isResolving: Boolean,
+    onPlayEpisode: (se: Int, ep: Int) -> Unit
 ) {
     Surface(
         color = Color(0xFF1F1F1F),
         shape = RoundedCornerShape(6.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
-                if (fallbackStreamUrl != null) {
-                    val epTitle = "$movieTitle - S${seasonNumber}:E${episode.episodeNumber} [${selectedQuality}]"
-                    onPlayClick(fallbackStreamUrl, epTitle)
-                }
+            .clickable(enabled = !isResolving) {
+                onPlayEpisode(seasonNumber, episode.episodeNumber)
             }
     ) {
         Row(
@@ -414,14 +476,24 @@ private fun EpisodeRowItem(
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
-                Icon(
-                    imageVector = Icons.Default.PlayCircle,
-                    contentDescription = "Play Episode",
-                    tint = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier
-                        .size(24.dp)
-                        .align(Alignment.Center)
-                )
+                if (isResolving) {
+                    CircularProgressIndicator(
+                        color = NetflixColors.NetflixRed,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier
+                            .size(24.dp)
+                            .align(Alignment.Center)
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.PlayCircle,
+                        contentDescription = "Play Episode",
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier
+                            .size(24.dp)
+                            .align(Alignment.Center)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
