@@ -1,13 +1,16 @@
 package com.netflix.moviebox.ui.player
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.annotation.OptIn
@@ -16,6 +19,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,25 +37,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.airbnb.lottie.compose.*
+import com.netflix.moviebox.api.MovieBoxClient
 import com.netflix.moviebox.ui.theme.NetflixColors
-import com.netflix.moviebox.ui.theme.NetflixDimens
-import com.netflix.moviebox.ui.theme.NetflixMotion
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class PlayerActivity : ComponentActivity() {
 
@@ -64,11 +68,21 @@ class PlayerActivity : ComponentActivity() {
 
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL) ?: ""
         val movieTitle = intent.getStringExtra(EXTRA_TITLE) ?: "Movie"
+        val subjectId = intent.getStringExtra(EXTRA_SUBJECT_ID) ?: ""
+        val seasonNumber = intent.getIntExtra(EXTRA_SEASON_NUMBER, 0)
+        val episodeNumber = intent.getIntExtra(EXTRA_EPISODE_NUMBER, 0)
+        val totalEpisodes = intent.getIntExtra(EXTRA_TOTAL_EPISODES, 0)
+        val detailPath = intent.getStringExtra(EXTRA_DETAIL_PATH) ?: ""
 
         setContent {
             NetflixVideoPlayer(
-                streamUrl = streamUrl,
-                title = movieTitle,
+                initialStreamUrl = streamUrl,
+                initialTitle = movieTitle,
+                subjectId = subjectId,
+                seasonNumber = seasonNumber,
+                initialEpisodeNumber = episodeNumber,
+                totalEpisodes = totalEpisodes,
+                detailPath = detailPath,
                 onBackPressed = { finish() },
                 onPlayerReady = { player -> exoPlayer = player }
             )
@@ -103,11 +117,30 @@ class PlayerActivity : ComponentActivity() {
     companion object {
         const val EXTRA_STREAM_URL = "extra_stream_url"
         const val EXTRA_TITLE = "extra_title"
+        const val EXTRA_SUBJECT_ID = "extra_subject_id"
+        const val EXTRA_SEASON_NUMBER = "extra_season_number"
+        const val EXTRA_EPISODE_NUMBER = "extra_episode_number"
+        const val EXTRA_TOTAL_EPISODES = "extra_total_episodes"
+        const val EXTRA_DETAIL_PATH = "extra_detail_path"
 
-        fun launch(context: Context, streamUrl: String, title: String) {
+        fun launch(
+            context: Context,
+            streamUrl: String,
+            title: String,
+            subjectId: String = "",
+            seasonNumber: Int = 0,
+            episodeNumber: Int = 0,
+            totalEpisodes: Int = 0,
+            detailPath: String = ""
+        ) {
             val intent = Intent(context, PlayerActivity::class.java).apply {
                 putExtra(EXTRA_STREAM_URL, streamUrl)
                 putExtra(EXTRA_TITLE, title)
+                putExtra(EXTRA_SUBJECT_ID, subjectId)
+                putExtra(EXTRA_SEASON_NUMBER, seasonNumber)
+                putExtra(EXTRA_EPISODE_NUMBER, episodeNumber)
+                putExtra(EXTRA_TOTAL_EPISODES, totalEpisodes)
+                putExtra(EXTRA_DETAIL_PATH, detailPath)
             }
             context.startActivity(intent)
         }
@@ -117,12 +150,20 @@ class PlayerActivity : ComponentActivity() {
 @OptIn(UnstableApi::class)
 @Composable
 fun NetflixVideoPlayer(
-    streamUrl: String,
-    title: String,
+    initialStreamUrl: String,
+    initialTitle: String,
+    subjectId: String = "",
+    seasonNumber: Int = 0,
+    initialEpisodeNumber: Int = 0,
+    totalEpisodes: Int = 0,
+    detailPath: String = "",
     onBackPressed: () -> Unit,
     onPlayerReady: (ExoPlayer) -> Unit
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
+    val coroutineScope = rememberCoroutineScope()
+
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
     var showControls by remember { mutableStateOf(true) }
@@ -144,58 +185,78 @@ fun NetflixVideoPlayer(
     var showRewindRipple by remember { mutableStateOf(false) }
     var showForwardRipple by remember { mutableStateOf(false) }
 
-    // Netflix-Grade Zero-Lag ExoPlayer Engine
-    val exoPlayer = remember {
-        // 1. High-speed streaming data source with VLC headers & keep-alive
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
-            .setDefaultRequestProperties(
-                mapOf(
-                    "Referer" to "https://themoviebox.xyz/",
-                    "Origin" to "https://themoviebox.xyz",
-                    "Accept" to "*/*",
-                    "Connection" to "keep-alive"
-                )
-            )
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(20000)
-            .setReadTimeoutMs(25000)
+    // Dynamic episode state for continuous series playback
+    var currentEpisode by remember { mutableIntStateOf(initialEpisodeNumber) }
+    var currentStreamUrl by remember { mutableStateOf(initialStreamUrl) }
+    var activeTitle by remember { mutableStateOf(initialTitle) }
+    var isSwitchingEpisode by remember { mutableStateOf(false) }
+    val hasNextEpisode = (totalEpisodes > 0 && currentEpisode > 0 && currentEpisode < totalEpisodes)
 
-        // 2. Hardware Acceleration with Decoder Fallback
+    // Audio & Brightness Edge Gesture Control State
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
+    val maxVolume = remember { audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15 }
+
+    var showBrightnessHud by remember { mutableStateOf(false) }
+    var currentBrightness by remember {
+        val initialB = activity?.window?.attributes?.screenBrightness ?: 0.5f
+        mutableFloatStateOf(if (initialB < 0f) 0.5f else initialB)
+    }
+
+    var showVolumeHud by remember { mutableStateOf(false) }
+    var currentVolumeRatio by remember {
+        val currentVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 7
+        mutableFloatStateOf(currentVol.toFloat() / maxVolume.coerceAtLeast(1))
+    }
+
+    // Netflix Ultra-Smooth Media Pipeline with LRU Chunk Cache
+    val exoPlayer = remember {
+        val cacheDataSourceFactory = VideoCacheManager.buildDataSourceFactory(context)
+
         val renderersFactory = DefaultRenderersFactory(context)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             .setEnableDecoderFallback(true)
             .setAllowedVideoJoiningTimeMs(5000)
 
-        // 3. Netflix LoadControl: Instant 800ms start buffer & 30s RAM back-buffer
+        // 500ms Instant Startup, 50s lookahead buffer, 60s RAM backbuffer
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 30_000,
-                /* maxBufferMs = */ 90_000,
-                /* bufferForPlaybackMs = */ 800,
-                /* bufferForPlaybackAfterRebufferMs = */ 2_000
+                /* minBufferMs = */ 50_000,
+                /* maxBufferMs = */ 120_000,
+                /* bufferForPlaybackMs = */ 500,
+                /* bufferForPlaybackAfterRebufferMs = */ 1_500
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .setBackBuffer(
-                /* backBufferDurationMs = */ 30_000,
+                /* backBufferDurationMs = */ 60_000,
                 /* retainBackBufferFromKeyframe = */ true
             )
             .build()
 
-        val bandwidthMeter = DefaultBandwidthMeter.Builder(context).build()
-        val trackSelector = DefaultTrackSelector(context, AdaptiveTrackSelection.Factory())
+        val adaptiveTrackSelectionFactory = AdaptiveTrackSelection.Factory(
+            /* minDurationForQualityIncreaseMs = */ 6_000,
+            /* maxDurationForQualityDecreaseMs = */ 10_000,
+            /* minDurationToRetainAfterDiscardMs = */ 15_000,
+            /* bandwidthFraction = */ 0.8f
+        )
+        val trackSelector = DefaultTrackSelector(context, adaptiveTrackSelectionFactory)
 
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(httpDataSourceFactory)
+            .setDataSourceFactory(cacheDataSourceFactory)
+
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
 
         ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setTrackSelector(trackSelector)
-            .setBandwidthMeter(bandwidthMeter)
             .build()
             .apply {
-                setMediaItem(MediaItem.fromUri(streamUrl))
+                setAudioAttributes(audioAttributes, true)
+                setWakeMode(C.WAKE_MODE_NETWORK)
+                setMediaItem(MediaItem.fromUri(currentStreamUrl))
                 prepare()
                 playWhenReady = true
                 addListener(object : Player.Listener {
@@ -221,11 +282,25 @@ fun NetflixVideoPlayer(
         }
     }
 
-    // Unlock button auto-hide
+    // Auto-hide unlock prompt
     LaunchedEffect(showUnlockPrompt) {
         if (showUnlockPrompt) {
             delay(3000)
             showUnlockPrompt = false
+        }
+    }
+
+    // Auto-hide gesture HUDs
+    LaunchedEffect(showBrightnessHud) {
+        if (showBrightnessHud) {
+            delay(1500)
+            showBrightnessHud = false
+        }
+    }
+    LaunchedEffect(showVolumeHud) {
+        if (showVolumeHud) {
+            delay(1500)
+            showVolumeHud = false
         }
     }
 
@@ -243,7 +318,7 @@ fun NetflixVideoPlayer(
         }
     }
 
-    // Timeline position & buffer sync loop
+    // Continuous timeline sync
     LaunchedEffect(isPlaying) {
         while (true) {
             currentPosition = exoPlayer.currentPosition
@@ -253,7 +328,7 @@ fun NetflixVideoPlayer(
         }
     }
 
-    // Lottie center spinner composition
+    // Lottie center spinner
     val spinnerComposition by rememberLottieComposition(
         LottieCompositionSpec.Asset("lottiefiles/play-loading-replay.json")
     )
@@ -266,25 +341,56 @@ fun NetflixVideoPlayer(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            // Gesture Layer 1: Left/Right Vertical Drag for Brightness & Volume
+            .pointerInput(isLocked) {
+                if (!isLocked) {
+                    var dragSideIsLeft = false
+                    detectVerticalDragGestures(
+                        onDragStart = { offset ->
+                            dragSideIsLeft = offset.x < size.width * 0.5f
+                        },
+                        onVerticalDrag = { change, dragAmount ->
+                            change.consume()
+                            val delta = -dragAmount / 350f
+                            if (dragSideIsLeft) {
+                                val newBrightness = (currentBrightness + delta).coerceIn(0.05f, 1.0f)
+                                currentBrightness = newBrightness
+                                activity?.let { act ->
+                                    val lp = act.window.attributes
+                                    lp.screenBrightness = newBrightness
+                                    act.window.attributes = lp
+                                }
+                                showBrightnessHud = true
+                            } else {
+                                val newVolRatio = (currentVolumeRatio + delta).coerceIn(0f, 1f)
+                                currentVolumeRatio = newVolRatio
+                                audioManager?.let { am ->
+                                    val targetVol = (newVolRatio * maxVolume).toInt()
+                                    am.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                                }
+                                showVolumeHud = true
+                            }
+                        }
+                    )
+                }
+            }
+            // Gesture Layer 2: Double-Tap & Single-Tap
             .pointerInput(isLocked) {
                 detectTapGestures(
                     onDoubleTap = { offset ->
                         if (!isLocked) {
                             val screenWidth = size.width
                             if (offset.x < screenWidth * 0.35f) {
-                                // Double-tap Left: Rewind 10s
                                 val target = (exoPlayer.currentPosition - 10000).coerceAtLeast(0)
                                 exoPlayer.seekTo(target)
                                 currentPosition = target
                                 showRewindRipple = true
                             } else if (offset.x > screenWidth * 0.65f) {
-                                // Double-tap Right: Fast-Forward 10s
                                 val target = (exoPlayer.currentPosition + 10000).coerceAtMost(totalDuration)
                                 exoPlayer.seekTo(target)
                                 currentPosition = target
                                 showForwardRipple = true
                             } else {
-                                // Double-tap Center: Toggle Play/Pause
                                 if (isPlaying) exoPlayer.pause() else exoPlayer.play()
                             }
                         }
@@ -314,7 +420,7 @@ fun NetflixVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. Animated Double-Tap Seek Ripples
+        // 2. Animated Double-Tap Seek Ripples (Left & Right)
         if (showRewindRipple) {
             Surface(
                 color = Color.Black.copy(alpha = 0.65f),
@@ -375,7 +481,109 @@ fun NetflixVideoPlayer(
             }
         }
 
-        // 3. Screen Locked Floating Unlock Indicator
+        // 3. Left-Edge Brightness HUD Slider
+        AnimatedVisibility(
+            visible = showBrightnessHud,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 36.dp)
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.75f),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, Color(0x33FFFFFF))
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.BrightnessMedium,
+                        contentDescription = "Brightness",
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(5.dp)
+                            .height(70.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(Color(0xFF444444)),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(currentBrightness.coerceIn(0f, 1f))
+                                .background(Color.White)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "${(currentBrightness * 100).toInt()}%",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // 4. Right-Edge Volume HUD Slider
+        AnimatedVisibility(
+            visible = showVolumeHud,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 36.dp)
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.75f),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, Color(0x33FFFFFF))
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
+                ) {
+                    Icon(
+                        imageVector = if (currentVolumeRatio <= 0.01f) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
+                        contentDescription = "Volume",
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(5.dp)
+                            .height(70.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(Color(0xFF444444)),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(currentVolumeRatio.coerceIn(0f, 1f))
+                                .background(NetflixColors.NetflixRed)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "${(currentVolumeRatio * 100).toInt()}%",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // 5. Screen Locked Floating Unlock Indicator
         if (isLocked && showUnlockPrompt) {
             Surface(
                 color = NetflixColors.NetflixRed,
@@ -410,7 +618,7 @@ fun NetflixVideoPlayer(
             }
         }
 
-        // 4. Netflix Controls Overlay
+        // 6. Netflix Controls Overlay
         AnimatedVisibility(
             visible = showControls && !isLocked,
             enter = fadeIn(),
@@ -440,7 +648,7 @@ fun NetflixVideoPlayer(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     Text(
-                        text = title,
+                        text = activeTitle,
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
@@ -672,7 +880,7 @@ fun NetflixVideoPlayer(
                     }
                 }
 
-                // D. Bottom Netflix Timeline & Scrub Bar
+                // D. Bottom Netflix Timeline, Scrub Bar & Next Episode
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -680,7 +888,6 @@ fun NetflixVideoPlayer(
                         .navigationBarsPadding()
                         .padding(horizontal = 24.dp, vertical = 14.dp)
                 ) {
-                    // Dual-Track Progress (Buffered progress in background + active playback)
                     val progressRatio = if (totalDuration > 0) (currentPosition.toFloat() / totalDuration).coerceIn(0f, 1f) else 0f
                     val bufferedRatio = if (totalDuration > 0) (bufferedPosition.toFloat() / totalDuration).coerceIn(0f, 1f) else 0f
 
@@ -725,26 +932,94 @@ fun NetflixVideoPlayer(
                         )
                     }
 
-                    // Time Row: Elapsed vs Remaining
+                    // Time Row & Next Episode Button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = formatTime(currentPosition),
-                            color = Color(0xFFCCCCCC),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = formatTime(currentPosition),
+                                color = Color(0xFFCCCCCC),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
 
-                        val remainingMs = (totalDuration - currentPosition).coerceAtLeast(0L)
-                        Text(
-                            text = "-${formatTime(remainingMs)}",
-                            color = Color(0xFF999999),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                            val remainingMs = (totalDuration - currentPosition).coerceAtLeast(0L)
+                            Text(
+                                text = " / -${formatTime(remainingMs)}",
+                                color = Color(0xFF999999),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        // Netflix "Next Episode" Button
+                        if (hasNextEpisode) {
+                            Surface(
+                                color = NetflixColors.NetflixRed,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.clickable(enabled = !isSwitchingEpisode) {
+                                    coroutineScope.launch {
+                                        isSwitchingEpisode = true
+                                        val nextEp = currentEpisode + 1
+                                        try {
+                                            val playRes = MovieBoxClient.getEpisodePlayStream(
+                                                subjectId = subjectId,
+                                                se = seasonNumber,
+                                                ep = nextEp,
+                                                detailPath = detailPath
+                                            )
+                                            val nextUrl = playRes.bestStreamUrl ?: playRes.streams.firstOrNull()?.url
+                                            if (nextUrl != null) {
+                                                currentEpisode = nextEp
+                                                currentStreamUrl = nextUrl
+                                                val cleanTitle = activeTitle.substringBefore(" - S").substringBefore(" [")
+                                                activeTitle = "$cleanTitle - S${seasonNumber}:E${nextEp}"
+                                                exoPlayer.setMediaItem(MediaItem.fromUri(nextUrl))
+                                                exoPlayer.prepare()
+                                                exoPlayer.play()
+                                                Toast.makeText(context, "Playing Episode $nextEp", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Next episode stream not available", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        } finally {
+                                            isSwitchingEpisode = false
+                                        }
+                                    }
+                                }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    if (isSwitchingEpisode) {
+                                        CircularProgressIndicator(
+                                            color = Color.White,
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.SkipNext,
+                                            contentDescription = "Next Episode",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Next Ep",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

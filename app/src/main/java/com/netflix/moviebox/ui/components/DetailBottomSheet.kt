@@ -45,7 +45,15 @@ import java.util.Locale
 fun DetailBottomSheet(
     movie: MovieBoxItem,
     onDismiss: () -> Unit,
-    onPlayClick: (streamUrl: String, title: String) -> Unit,
+    onPlayClick: (
+        streamUrl: String,
+        title: String,
+        subjectId: String,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        totalEpisodes: Int,
+        detailPath: String
+    ) -> Unit,
     onDownloadClick: (subjectId: String, title: String) -> Unit
 ) {
     val context = LocalContext.current
@@ -91,6 +99,7 @@ fun DetailBottomSheet(
             try {
                 val seNum = if (isSeries) (activeSeason?.seasonNumber ?: 1) else 0
                 val epNum = if (isSeries) (activeSeason?.episodes?.firstOrNull()?.episodeNumber ?: 1) else 0
+                val totalEps = activeSeason?.episodes?.size ?: activeSeason?.maxEpisodes ?: 0
                 val playRes = MovieBoxClient.getEpisodePlayStream(
                     subjectId = currentMovie.subjectId,
                     se = seNum,
@@ -109,7 +118,7 @@ fun DetailBottomSheet(
                     } else {
                         "${currentMovie.title} [${selectedQuality}]"
                     }
-                    onPlayClick(finalUrl, playTitle)
+                    onPlayClick(finalUrl, playTitle, currentMovie.subjectId, seNum, epNum, totalEps, activeDetailPath)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -633,7 +642,8 @@ fun DetailBottomSheet(
                                     val finalUrl = matched?.url ?: staticStreamUrl
                                     if (finalUrl != null) {
                                         val epTitle = "${currentMovie.title} - S${seNum}:E${epNum} [${selectedQuality}]"
-                                        onPlayClick(finalUrl, epTitle)
+                                        val totalEps = activeSeason.episodes.size
+                                        onPlayClick(finalUrl, epTitle, currentMovie.subjectId, seNum, epNum, totalEps, activeDetailPath)
                                     }
                                 } catch (e: Exception) {
                                     e.printStackTrace()

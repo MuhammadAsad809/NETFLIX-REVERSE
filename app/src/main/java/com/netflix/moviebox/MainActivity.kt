@@ -145,7 +145,16 @@ fun MainAppScaffold() {
                                     ?: movie.trailerUrl
                                 if (bestUrl != null) {
                                     val titleBadge = if (isSeries) "${movie.title} - S1:E1" else "${movie.title} [Full Movie]"
-                                    PlayerActivity.launch(context, bestUrl, titleBadge)
+                                    PlayerActivity.launch(
+                                        context = context,
+                                        streamUrl = bestUrl,
+                                        title = titleBadge,
+                                        subjectId = movie.subjectId,
+                                        seasonNumber = if (isSeries) 1 else 0,
+                                        episodeNumber = if (isSeries) 1 else 0,
+                                        totalEpisodes = 12,
+                                        detailPath = movie.detailPath
+                                    )
                                 } else {
                                     Toast.makeText(context, "Stream not available", Toast.LENGTH_SHORT).show()
                                 }
@@ -174,9 +183,18 @@ fun MainAppScaffold() {
                 DetailBottomSheet(
                     movie = currentMovie,
                     onDismiss = { selectedMovie = null },
-                    onPlayClick = { streamUrl, title ->
+                    onPlayClick = { streamUrl, title, subId, se, ep, totalEps, dPath ->
                         selectedMovie = null
-                        PlayerActivity.launch(context, streamUrl, title)
+                        PlayerActivity.launch(
+                            context = context,
+                            streamUrl = streamUrl,
+                            title = title,
+                            subjectId = subId,
+                            seasonNumber = se,
+                            episodeNumber = ep,
+                            totalEpisodes = totalEps,
+                            detailPath = dPath
+                        )
                     },
                     onDownloadClick = { subjectId, title ->
                         coroutineScope.launch {
