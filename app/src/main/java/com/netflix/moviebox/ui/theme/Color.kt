@@ -9,6 +9,10 @@ object NetflixColors {
     val SurfaceElevated = Color(0xFF2A2A2A)
 
     val NetflixRed = Color(0xFFE50914)
+    val MovieBoxGreen = Color(0xFF00D26A)
+    val MovieBoxGreenLight = Color(0xFF00E676)
+    val MovieBoxGreenDark = Color(0xFF00A854)
+    val MovieBoxAccentBg = Color(0x1A00D26A)
     val PureWhite = Color(0xFFFFFFFF)
 
     val TextMuted = Color(0xFFA3A3A3)

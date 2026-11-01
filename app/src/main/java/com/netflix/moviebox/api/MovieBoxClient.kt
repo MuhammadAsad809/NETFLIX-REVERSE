@@ -167,7 +167,21 @@ object MovieBoxClient {
                 }
             }
         }
-        result
+
+        // Rank by keyword match relevance and then score
+        val qClean = searchTerm.lowercase().trim()
+        val sortedList = result.sortedWith(
+            compareByDescending<MovieBoxItem> {
+                val t = it.title.lowercase().trim()
+                when {
+                    t == qClean || t.startsWith("$qClean [") || t.startsWith("$qClean:") || t.startsWith("$qClean ") -> 100
+                    t.startsWith(qClean) -> 80
+                    t.contains(qClean) -> 50
+                    else -> 10
+                }
+            }.thenByDescending { it.score }
+        )
+        sortedList
     }
 
     private fun fetchSingleSearchPage(

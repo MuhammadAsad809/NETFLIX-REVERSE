@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -46,11 +47,11 @@ fun SearchScreen(
     var isSearching by remember { mutableStateOf(false) }
     var trendingKeywords by remember { mutableStateOf<List<String>>(emptyList()) }
 
-    val categories = listOf("All", "Movies", "TV Shows", "Anime")
+    val categories = listOf("All", "Movie", "TV Series", "Anime")
 
     val subjectType = when (selectedCategory) {
-        "Movies" -> 1
-        "TV Shows" -> 2
+        "Movie" -> 1
+        "TV Series" -> 2
         "Anime" -> 6
         else -> 0
     }
@@ -79,11 +80,11 @@ fun SearchScreen(
                     val filtered = MovieBoxClient.getFilteredCatalog(genre = "Anime", perPage = 30)
                     if (filtered.isNotEmpty()) filtered else MovieBoxClient.searchMovies("Anime", subjectType = 6, maxPages = 2)
                 }
-                "Movies" -> {
+                "Movie" -> {
                     val filtered = MovieBoxClient.getFilteredCatalog(subjectType = 1, perPage = 30)
                     if (filtered.isNotEmpty()) filtered else MovieBoxClient.searchMovies("Marvel", subjectType = 1, maxPages = 2)
                 }
-                "TV Shows" -> {
+                "TV Series" -> {
                     val filtered = MovieBoxClient.getFilteredCatalog(subjectType = 2, perPage = 30)
                     if (filtered.isNotEmpty()) filtered else MovieBoxClient.searchMovies("Series", subjectType = 2, maxPages = 2)
                 }
@@ -108,7 +109,7 @@ fun SearchScreen(
             value = searchQuery,
             onValueChange = { searchQuery = it },
             placeholder = { Text("Search movies, TV shows, anime...", color = NetflixColors.TextSecondary, fontSize = 14.sp) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = NetflixColors.TextMuted) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = NetflixColors.MovieBoxGreen) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { searchQuery = "" }) {
@@ -118,34 +119,41 @@ fun SearchScreen(
             },
             singleLine = true,
             colors = TextFieldDefaults.colors(
-                focusedContainerColor = NetflixColors.CardSurface,
-                unfocusedContainerColor = NetflixColors.CardSurface,
+                focusedContainerColor = Color(0xFF1E1E1E),
+                unfocusedContainerColor = Color(0xFF1A1A1A),
                 focusedTextColor = Color.White,
                 unfocusedTextColor = Color.White,
-                focusedIndicatorColor = Color.Transparent,
+                focusedIndicatorColor = NetflixColors.MovieBoxGreen,
                 unfocusedIndicatorColor = Color.Transparent
             ),
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(10.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 10.dp)
         )
 
-        // 2. Category Filter Chips (All, Movies, TV Shows, Anime)
+        // 2. Category Filter Chips (All, Movie, TV Series, Anime)
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(bottom = 10.dp)
         ) {
             items(categories) { cat ->
+                val isSelected = selectedCategory == cat
                 FilterChip(
-                    selected = (selectedCategory == cat),
+                    selected = isSelected,
                     onClick = { selectedCategory = cat },
-                    label = { Text(cat, fontSize = 12.sp, fontWeight = FontWeight.Medium) },
+                    label = { Text(cat, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = NetflixColors.NetflixRed,
-                        selectedLabelColor = Color.White,
-                        containerColor = NetflixColors.CardSurface,
-                        labelColor = NetflixColors.TextMuted
+                        selectedContainerColor = NetflixColors.MovieBoxGreen,
+                        selectedLabelColor = Color.Black,
+                        containerColor = Color(0xFF1E1E1E),
+                        labelColor = Color(0xFFB0B0B0)
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isSelected,
+                        borderColor = Color.Transparent,
+                        selectedBorderColor = NetflixColors.MovieBoxGreen
                     )
                 )
             }
@@ -161,7 +169,7 @@ fun SearchScreen(
                     Icon(
                         imageVector = Icons.Default.TrendingUp,
                         contentDescription = null,
-                        tint = Color(0xFF00D26A),
+                        tint = NetflixColors.MovieBoxGreen,
                         modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -180,6 +188,7 @@ fun SearchScreen(
                         Surface(
                             color = Color(0xFF222222),
                             shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(0.5.dp, Color(0xFF333333)),
                             modifier = Modifier.clickable {
                                 searchQuery = kw
                             }
@@ -196,10 +205,10 @@ fun SearchScreen(
             }
         }
 
-        // 4. Results Grid with Authentic MovieBox Cards
+        // 4. Results Grid with Authentic MovieBox Accurate Card & Grid
         if (isSearching) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = NetflixColors.NetflixRed)
+                CircularProgressIndicator(color = NetflixColors.MovieBoxGreen)
             }
         } else if (searchResults.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -210,6 +219,10 @@ fun SearchScreen(
                 )
             }
         } else {
+            val isSearchMode = searchQuery.trim().isNotBlank()
+            val bestMatch = if (isSearchMode) searchResults.firstOrNull() else null
+            val remainingItems = if (isSearchMode && bestMatch != null) searchResults.drop(1) else searchResults
+
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -217,7 +230,30 @@ fun SearchScreen(
                 contentPadding = PaddingValues(bottom = 80.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(searchResults) { movie ->
+                // If in search mode, display the Accurate Match Hero Card spanning all 3 columns
+                if (bestMatch != null) {
+                    item(span = { GridItemSpan(3) }) {
+                        AccurateMovieMatchCard(
+                            movie = bestMatch,
+                            onClick = { onMovieClick(bestMatch) }
+                        )
+                    }
+
+                    if (remainingItems.isNotEmpty()) {
+                        item(span = { GridItemSpan(3) }) {
+                            Text(
+                                text = "All Results (${searchResults.size})",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Grid cards
+                items(remainingItems) { movie ->
                     SearchMovieCard(
                         movie = movie,
                         onClick = { onMovieClick(movie) }
@@ -228,6 +264,175 @@ fun SearchScreen(
     }
 }
 
+/**
+ * Authentic MovieBox "Accurate Match" layout (corresponds to item_search_values_accurate_layout in MovieBox APK)
+ */
+@Composable
+private fun AccurateMovieMatchCard(
+    movie: MovieBoxItem,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = Color(0xFF1A1A1A),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0x3300D26A)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp)
+        ) {
+            // Poster
+            Box(
+                modifier = Modifier
+                    .width(105.dp)
+                    .height(148.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF262626))
+            ) {
+                AsyncImage(
+                    model = movie.coverUrl,
+                    contentDescription = movie.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+
+                // Limited Free Badge
+                Surface(
+                    color = NetflixColors.MovieBoxGreen,
+                    shape = RoundedCornerShape(bottomEnd = 6.dp),
+                    modifier = Modifier.align(Alignment.TopStart)
+                ) {
+                    Text(
+                        text = "Limited Free",
+                        color = Color.Black,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                    )
+                }
+
+                // Rating
+                if (movie.score > 0.0) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.8f),
+                        shape = RoundedCornerShape(topStart = 6.dp),
+                        modifier = Modifier.align(Alignment.BottomEnd)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Star,
+                                contentDescription = null,
+                                tint = Color(0xFFFFB800),
+                                modifier = Modifier.size(10.dp)
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text(
+                                text = String.format(Locale.US, "%.1f", movie.score),
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Right details column
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(148.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Surface(
+                        color = Color(0x2600D26A),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "BEST MATCH",
+                            color = NetflixColors.MovieBoxGreen,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = movie.title,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "${movie.releaseDate} • ${movie.duration} • ${movie.detectedLang}",
+                        color = NetflixColors.TextMuted,
+                        fontSize = 11.sp
+                    )
+
+                    if (movie.genre.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = movie.genre.replace(",", " • "),
+                            color = Color(0xFF888888),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Solid Green Watch Button
+                Button(
+                    onClick = onClick,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NetflixColors.MovieBoxGreen,
+                        contentColor = Color.Black
+                    ),
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Watch now",
+                        color = Color.Black,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Standard 3-column MovieBox Grid Card
+ */
 @Composable
 private fun SearchMovieCard(
     movie: MovieBoxItem,
@@ -243,7 +448,7 @@ private fun SearchMovieCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(155.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(NetflixColors.CardSurface)
         ) {
             AsyncImage(
@@ -255,13 +460,13 @@ private fun SearchMovieCard(
 
             // Top-left: Limited Free Badge
             Surface(
-                color = Color(0xFF00D26A),
+                color = NetflixColors.MovieBoxGreen,
                 shape = RoundedCornerShape(bottomEnd = 6.dp),
                 modifier = Modifier.align(Alignment.TopStart)
             ) {
                 Text(
                     text = "Limited Free",
-                    color = Color.White,
+                    color = Color.Black,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
@@ -271,7 +476,7 @@ private fun SearchMovieCard(
             // Bottom-right: Rating Badge
             if (movie.score > 0.0) {
                 Surface(
-                    color = Color.Black.copy(alpha = 0.75f),
+                    color = Color.Black.copy(alpha = 0.8f),
                     shape = RoundedCornerShape(topStart = 6.dp),
                     modifier = Modifier.align(Alignment.BottomEnd)
                 ) {
@@ -314,9 +519,9 @@ private fun SearchMovieCard(
 
         // 3. Authentic Green "Watch now" Action Button
         Surface(
-            color = Color(0x1A00D26A),
+            color = NetflixColors.MovieBoxAccentBg,
             shape = RoundedCornerShape(4.dp),
-            border = BorderStroke(1.dp, Color(0xFF00D26A)),
+            border = BorderStroke(1.dp, NetflixColors.MovieBoxGreen),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(26.dp)
@@ -330,13 +535,13 @@ private fun SearchMovieCard(
                 Icon(
                     imageVector = Icons.Default.PlayArrow,
                     contentDescription = null,
-                    tint = Color(0xFF00D26A),
+                    tint = NetflixColors.MovieBoxGreen,
                     modifier = Modifier.size(13.dp)
                 )
                 Spacer(modifier = Modifier.width(3.dp))
                 Text(
                     text = "Watch now",
-                    color = Color(0xFF00D26A),
+                    color = NetflixColors.MovieBoxGreen,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold
                 )

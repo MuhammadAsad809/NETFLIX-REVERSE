@@ -84,13 +84,13 @@ fun StandardMovieCard(
 
         // Top-left: Limited Free Badge
         Surface(
-            color = Color(0xFF00D26A),
+            color = NetflixColors.MovieBoxGreen,
             shape = RoundedCornerShape(bottomEnd = 4.dp),
             modifier = Modifier.align(Alignment.TopStart)
         ) {
             Text(
                 text = "Limited Free",
-                color = Color.White,
+                color = Color.Black,
                 fontSize = 8.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
@@ -164,13 +164,13 @@ fun RankedMovieCard(
 
             // Top-left: Limited Free Badge
             Surface(
-                color = Color(0xFF00D26A),
+                color = NetflixColors.MovieBoxGreen,
                 shape = RoundedCornerShape(bottomEnd = 4.dp),
                 modifier = Modifier.align(Alignment.TopStart)
             ) {
                 Text(
                     text = "Limited Free",
-                    color = Color.White,
+                    color = Color.Black,
                     fontSize = 8.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
