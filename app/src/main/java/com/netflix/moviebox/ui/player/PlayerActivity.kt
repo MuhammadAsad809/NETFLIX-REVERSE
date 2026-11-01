@@ -64,6 +64,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        VideoCacheManager.registerPlayer()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemUI()
 
@@ -135,6 +136,7 @@ class PlayerActivity : ComponentActivity() {
         super.onDestroy()
         exoPlayer?.release()
         exoPlayer = null
+        VideoCacheManager.unregisterPlayer()
     }
 
     companion object {
