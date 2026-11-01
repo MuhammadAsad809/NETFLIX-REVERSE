@@ -25,6 +25,7 @@ data class MovieBoxItem(
     val detectedLang: String = "English",
     val duration: String = "2h 10m",
     val genre: String = "",
+    val countryName: String = "",
     val subjectType: Int = 1,
     val seasonCount: Int = 0,
     val detailPath: String = ""
@@ -97,6 +98,18 @@ data class HomeFeedResult(
 
 object MovieBoxClient {
 
+    val API_HOSTS = listOf(
+        "h5-api.aoneroom.com",
+        "apig.inmoviebox.com",
+        "api7.aoneroom.com",
+        "api6.aoneroom.com",
+        "api5.aoneroom.com",
+        "api4.aoneroom.com",
+        "api4sg.aoneroom.com",
+        "api3.aoneroom.com"
+    )
+    var currentHost: String = "h5-api.aoneroom.com"
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -108,12 +121,17 @@ object MovieBoxClient {
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    private fun getApiHeaders(): Map<String, String> {
+    fun getApiHeaders(useVlc: Boolean = false): Map<String, String> {
         val now = System.currentTimeMillis() / 1000
         val revNow = now.toString().reversed()
         val tokenHash = md5(revNow)
+        val ua = if (useVlc) {
+            "VLC/3.0.18 LibVLC/3.0.18"
+        } else {
+            "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        }
         return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to ua,
             "Accept" to "application/json, text/plain, */*",
             "Content-Type" to "application/json",
             "Origin" to "https://h5.aoneroom.com",
@@ -352,6 +370,7 @@ object MovieBoxClient {
             if (hrs > 0) "${hrs}h ${mins}m" else "${mins}m"
         } else "2h 10m"
         val genre = obj.optString("genre", "")
+        val country = obj.optString("countryName", "")
         val st = obj.optInt("subjectType", 1)
         val season = obj.optInt("season", 0)
         val detailPath = obj.optString("detailPath", "")
@@ -368,6 +387,7 @@ object MovieBoxClient {
             detectedLang = lang,
             duration = durationStr,
             genre = genre,
+            countryName = country,
             subjectType = st,
             seasonCount = season,
             detailPath = detailPath
@@ -658,7 +678,7 @@ object MovieBoxClient {
             .addHeader("Referer", "https://themoviebox.xyz/en/spa/videoPlayPage/movies/$realDetailPath")
             .addHeader("X-Vip-Restrict", "0")
 
-        getApiHeaders().forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+        getApiHeaders(useVlc = true).forEach { (k, v) -> reqBuilder.addHeader(k, v) }
 
         try {
             client.newCall(reqBuilder.build()).execute().use { response ->

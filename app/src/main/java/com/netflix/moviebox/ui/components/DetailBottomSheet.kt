@@ -788,7 +788,7 @@ private fun EpisodeRowItem(
                 modifier = Modifier
                     .size(width = 85.dp, height = 52.dp)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(Color.Black)
+                    .background(Color(0xFF222222))
             ) {
                 AsyncImage(
                     model = episode.stillUrl,
@@ -796,12 +796,42 @@ private fun EpisodeRowItem(
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
+
+                // Dark Bottom Gradient
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.75f)
+                                )
+                            )
+                        )
+                )
+
+                // Episode Number Badge
+                Surface(
+                    color = Color.Black.copy(alpha = 0.8f),
+                    shape = RoundedCornerShape(bottomEnd = 4.dp),
+                    modifier = Modifier.align(Alignment.TopStart)
+                ) {
+                    Text(
+                        text = "EP ${episode.episodeNumber}",
+                        color = NetflixColors.MovieBoxGreen,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
+
                 if (isResolving) {
                     CircularProgressIndicator(
                         color = NetflixColors.MovieBoxGreen,
                         strokeWidth = 2.dp,
                         modifier = Modifier
-                            .size(24.dp)
+                            .size(22.dp)
                             .align(Alignment.Center)
                     )
                 } else {
@@ -809,7 +839,7 @@ private fun EpisodeRowItem(
                         color = Color.Black.copy(alpha = 0.5f),
                         shape = CircleShape,
                         modifier = Modifier
-                            .size(26.dp)
+                            .size(24.dp)
                             .align(Alignment.Center)
                     ) {
                         Icon(
@@ -817,7 +847,7 @@ private fun EpisodeRowItem(
                             contentDescription = "Play Episode",
                             tint = Color.White,
                             modifier = Modifier
-                                .size(18.dp)
+                                .size(16.dp)
                                 .align(Alignment.Center)
                         )
                     }
