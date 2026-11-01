@@ -80,6 +80,12 @@ fun DetailBottomSheet(
         detailResult = MovieBoxClient.getSubjectDetail(currentMovie.subjectId)
         recommendations = MovieBoxClient.getDetailRecommendations(currentMovie.subjectId)
         isLoadingDetail = false
+
+        // Netflix-style pre-fetch: cache first 2MB while user views details
+        val prefetchUrl = detailResult?.streams?.fullStreamUrl ?: detailResult?.streams?.trailerUrl ?: currentMovie.trailerUrl
+        if (!prefetchUrl.isNullOrEmpty()) {
+            com.netflix.moviebox.ui.player.VideoCacheManager.prefetchStream(context, prefetchUrl)
+        }
     }
 
     // Fetch related audio releases on currentMovie change

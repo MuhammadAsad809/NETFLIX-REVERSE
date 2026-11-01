@@ -60,6 +60,7 @@ import kotlinx.coroutines.launch
 class PlayerActivity : ComponentActivity() {
 
     private var exoPlayer: ExoPlayer? = null
+    private var isPipMode by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,9 +84,31 @@ class PlayerActivity : ComponentActivity() {
                 initialEpisodeNumber = episodeNumber,
                 totalEpisodes = totalEpisodes,
                 detailPath = detailPath,
+                isPipMode = isPipMode,
                 onBackPressed = { finish() },
                 onPlayerReady = { player -> exoPlayer = player }
             )
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && exoPlayer?.isPlaying == true) {
+            val params = android.app.PictureInPictureParams.Builder()
+                .setAspectRatio(android.util.Rational(16, 9))
+                .build()
+            enterPictureInPictureMode(params)
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isPipMode = isInPictureInPictureMode
+        if (!isInPictureInPictureMode) {
+            hideSystemUI()
         }
     }
 
@@ -157,6 +180,7 @@ fun NetflixVideoPlayer(
     initialEpisodeNumber: Int = 0,
     totalEpisodes: Int = 0,
     detailPath: String = "",
+    isPipMode: Boolean = false,
     onBackPressed: () -> Unit,
     onPlayerReady: (ExoPlayer) -> Unit
 ) {
@@ -342,8 +366,8 @@ fun NetflixVideoPlayer(
             .fillMaxSize()
             .background(Color.Black)
             // Gesture Layer 1: Left/Right Vertical Drag for Brightness & Volume
-            .pointerInput(isLocked) {
-                if (!isLocked) {
+            .pointerInput(isLocked, isPipMode) {
+                if (!isLocked && !isPipMode) {
                     var dragSideIsLeft = false
                     detectVerticalDragGestures(
                         onDragStart = { offset ->
@@ -375,34 +399,36 @@ fun NetflixVideoPlayer(
                 }
             }
             // Gesture Layer 2: Double-Tap & Single-Tap
-            .pointerInput(isLocked) {
-                detectTapGestures(
-                    onDoubleTap = { offset ->
-                        if (!isLocked) {
-                            val screenWidth = size.width
-                            if (offset.x < screenWidth * 0.35f) {
-                                val target = (exoPlayer.currentPosition - 10000).coerceAtLeast(0)
-                                exoPlayer.seekTo(target)
-                                currentPosition = target
-                                showRewindRipple = true
-                            } else if (offset.x > screenWidth * 0.65f) {
-                                val target = (exoPlayer.currentPosition + 10000).coerceAtMost(totalDuration)
-                                exoPlayer.seekTo(target)
-                                currentPosition = target
-                                showForwardRipple = true
+            .pointerInput(isLocked, isPipMode) {
+                if (!isPipMode) {
+                    detectTapGestures(
+                        onDoubleTap = { offset ->
+                            if (!isLocked) {
+                                val screenWidth = size.width
+                                if (offset.x < screenWidth * 0.35f) {
+                                    val target = (exoPlayer.currentPosition - 10000).coerceAtLeast(0)
+                                    exoPlayer.seekTo(target)
+                                    currentPosition = target
+                                    showRewindRipple = true
+                                } else if (offset.x > screenWidth * 0.65f) {
+                                    val target = (exoPlayer.currentPosition + 10000).coerceAtMost(totalDuration)
+                                    exoPlayer.seekTo(target)
+                                    currentPosition = target
+                                    showForwardRipple = true
+                                } else {
+                                    if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                }
+                            }
+                        },
+                        onTap = {
+                            if (isLocked) {
+                                showUnlockPrompt = !showUnlockPrompt
                             } else {
-                                if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                showControls = !showControls
                             }
                         }
-                    },
-                    onTap = {
-                        if (isLocked) {
-                            showUnlockPrompt = !showUnlockPrompt
-                        } else {
-                            showControls = !showControls
-                        }
-                    }
-                )
+                    )
+                }
             }
     ) {
         // 1. AndroidView Video Surface
@@ -620,7 +646,7 @@ fun NetflixVideoPlayer(
 
         // 6. Netflix Controls Overlay
         AnimatedVisibility(
-            visible = showControls && !isLocked,
+            visible = showControls && !isLocked && !isPipMode,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
@@ -656,6 +682,25 @@ fun NetflixVideoPlayer(
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
+
+                    // Picture-in-Picture Button
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        IconButton(
+                            onClick = {
+                                val params = android.app.PictureInPictureParams.Builder()
+                                    .setAspectRatio(android.util.Rational(16, 9))
+                                    .build()
+                                activity?.enterPictureInPictureMode(params)
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PictureInPictureAlt,
+                                contentDescription = "Picture in Picture",
+                                tint = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
 
                     // Aspect Ratio Button (Fit / Zoom / Stretch)
                     Surface(

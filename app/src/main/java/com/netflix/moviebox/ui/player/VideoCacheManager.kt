@@ -74,6 +74,34 @@ object VideoCacheManager {
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
 
+    /**
+     * Netflix-style stream pre-fetcher.
+     * Pre-warms the first 2MB into the local cache before user taps Play.
+     */
+    fun prefetchStream(context: Context, streamUrl: String, prefetchBytes: Long = 2L * 1024L * 1024L) {
+        if (streamUrl.isBlank()) return
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                val cache = getCache(context)
+                val okHttpFactory = OkHttpDataSource.Factory(okHttpClient)
+                    .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
+                    .setDefaultRequestProperties(
+                        mapOf(
+                            "Referer" to "https://themoviebox.xyz/",
+                            "Origin" to "https://themoviebox.xyz"
+                        )
+                    )
+                val upstream = okHttpFactory.createDataSource()
+                val cacheDataSource = CacheDataSource(cache, upstream)
+                val dataSpec = androidx.media3.datasource.DataSpec(android.net.Uri.parse(streamUrl), 0, prefetchBytes)
+                val cacheWriter = androidx.media3.datasource.cache.CacheWriter(cacheDataSource, dataSpec, null, null)
+                cacheWriter.cache()
+            } catch (e: Exception) {
+                // Non-fatal prefetch failure
+            }
+        }
+    }
+
     fun releaseCache() {
         try {
             simpleCache?.release()
