@@ -61,10 +61,11 @@ class PlayerActivity : ComponentActivity() {
 
     private var exoPlayer: ExoPlayer? = null
     private var isPipMode by mutableStateOf(false)
+    private var playerToken: VideoCacheManager.PlayerToken? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        VideoCacheManager.registerPlayer()
+        playerToken = VideoCacheManager.registerPlayer()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemUI()
 
@@ -136,7 +137,8 @@ class PlayerActivity : ComponentActivity() {
         super.onDestroy()
         exoPlayer?.release()
         exoPlayer = null
-        VideoCacheManager.unregisterPlayer()
+        VideoCacheManager.unregisterPlayer(playerToken)
+        playerToken = null
     }
 
     companion object {

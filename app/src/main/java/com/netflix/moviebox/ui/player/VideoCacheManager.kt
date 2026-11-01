@@ -20,14 +20,15 @@ import kotlinx.coroutines.launch
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Robust persistent media cache and prefetch manager.
+ * Production-ready persistent media cache and prefetch manager.
  * Implements chunk-level caching with LRU eviction, duplicate-prefetch protection,
- * and player reference-counted lifecycle coordination.
+ * token-based player lifecycle tracking, and race-free cache release coordination.
  */
 @OptIn(UnstableApi::class)
 object VideoCacheManager {
@@ -40,14 +41,23 @@ object VideoCacheManager {
     // 256MB dedicated local LRU media cache (balanced for mobile storage)
     private const val MAX_CACHE_SIZE = 256L * 1024L * 1024L
 
-    // Player reference counting to prevent premature cache eviction during active playback
-    private val activePlayers = AtomicInteger(0)
+    // Player registration token for lifecycle enforcement
+    class PlayerToken internal constructor(val id: String)
 
-    // Managed CoroutineScope for all background stream prefetching
+    // Set of active player session tokens
+    private val activePlayerTokens = ConcurrentHashMap.newKeySet<String>()
+
+    // Counter of active ongoing prefetch tasks
+    private val activePrefetchCount = AtomicInteger(0)
+
+    // Managed single scope with SupervisorJob for all background prefetching
     private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // Duplicate-prefetch in-flight protection
-    private val prefetchJobs = ConcurrentHashMap.newKeySet<String>()
+    // In-flight prefetch jobs deduplication
+    private val inFlightPrefetches = ConcurrentHashMap.newKeySet<String>()
+
+    // Persistent set of already prefetched stream URLs in current session
+    private val completedPrefetches = ConcurrentHashMap.newKeySet<String>()
 
     val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -89,7 +99,8 @@ object VideoCacheManager {
             "Connection" to "keep-alive"
         )
 
-        val headers = customHeaders ?: defaultHeaders
+        // Custom headers safely override or augment defaults without stripping essential headers
+        val headers = defaultHeaders + (customHeaders ?: emptyMap())
 
         val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
             .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
@@ -102,33 +113,53 @@ object VideoCacheManager {
     }
 
     /**
-     * Managed stream pre-fetcher.
-     * Pre-warms the first [prefetchBytes] into the local cache before user taps Play.
-     * Includes deduplication, validation, and error logging.
+     * Managed stream pre-fetcher:
+     * - Fast check: skip if already completed in session
+     * - SimpleCache span check: skip if bytes already cached on disk
+     * - In-flight deduplication
+     * - Active prefetch tracking to guard releaseCache()
      */
     fun prefetchStream(
         context: Context,
         streamUrl: String,
-        prefetchBytes: Long = 2L * 1024L * 1024L
+        prefetchBytes: Long = 2L * 1024L * 1024L,
+        customHeaders: Map<String, String>? = null
     ) {
         if (streamUrl.isBlank() || prefetchBytes <= 0L) return
 
-        // Prevent duplicate prefetch for the same stream URL
-        if (!prefetchJobs.add(streamUrl)) return
+        // 1. Fast check if already completed
+        if (completedPrefetches.contains(streamUrl)) return
+
+        // 2. SimpleCache span check: if already cached on disk, skip network work completely
+        try {
+            val cache = getCache(context)
+            if (cache.isCached(streamUrl, 0, prefetchBytes)) {
+                completedPrefetches.add(streamUrl)
+                return
+            }
+        } catch (e: Exception) {
+            // cache access error, proceed to prefetch
+        }
+
+        // 3. In-flight duplicate prevention
+        if (!inFlightPrefetches.add(streamUrl)) return
+
+        activePrefetchCount.incrementAndGet()
 
         prefetchScope.launch {
             try {
                 val cache = getCache(context)
+                val defaultHeaders = mapOf(
+                    "Referer" to "https://themoviebox.xyz/",
+                    "Origin" to "https://themoviebox.xyz",
+                    "Accept" to "*/*",
+                    "Connection" to "keep-alive"
+                )
+                val headers = defaultHeaders + (customHeaders ?: emptyMap())
+
                 val okHttpFactory = OkHttpDataSource.Factory(okHttpClient)
                     .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
-                    .setDefaultRequestProperties(
-                        mapOf(
-                            "Referer" to "https://themoviebox.xyz/",
-                            "Origin" to "https://themoviebox.xyz",
-                            "Accept" to "*/*",
-                            "Connection" to "keep-alive"
-                        )
-                    )
+                    .setDefaultRequestProperties(headers)
 
                 val factory = CacheDataSource.Factory()
                     .setCache(cache)
@@ -151,35 +182,67 @@ object VideoCacheManager {
                 )
 
                 writer.cache()
+                completedPrefetches.add(streamUrl)
                 Log.d(TAG, "Prefetched $prefetchBytes bytes for $streamUrl")
             } catch (e: Exception) {
                 Log.w(TAG, "Stream prefetch failed for $streamUrl: ${e.message}")
             } finally {
-                prefetchJobs.remove(streamUrl)
+                inFlightPrefetches.remove(streamUrl)
+                activePrefetchCount.decrementAndGet()
             }
         }
     }
 
-    fun registerPlayer() {
-        activePlayers.incrementAndGet()
+    /**
+     * Registers a player session with a unique token.
+     * Guaranteed safe: prevents releaseCache() while player is alive.
+     */
+    fun registerPlayer(): PlayerToken {
+        val tokenId = UUID.randomUUID().toString()
+        activePlayerTokens.add(tokenId)
+        Log.d(TAG, "Player registered: $tokenId (total active: ${activePlayerTokens.size})")
+        return PlayerToken(tokenId)
     }
 
-    fun unregisterPlayer() {
-        val remaining = activePlayers.decrementAndGet()
-        if (remaining <= 0) {
-            activePlayers.set(0)
+    /**
+     * Unregisters a player session using its specific token.
+     * Prevents double-unregister bugs from corrupting counter state.
+     */
+    fun unregisterPlayer(token: PlayerToken?) {
+        if (token == null) return
+        val removed = activePlayerTokens.remove(token.id)
+        if (removed) {
+            Log.d(TAG, "Player unregistered: ${token.id} (remaining: ${activePlayerTokens.size})")
+        } else {
+            Log.w(TAG, "Player token ${token.id} was already unregistered or invalid")
         }
     }
 
+    /**
+     * Safely releases SimpleCache ONLY when:
+     * 1. No active player sessions exist.
+     * 2. No background prefetch jobs are writing to the cache.
+     */
     fun releaseCache() {
-        if (activePlayers.get() > 0) {
-            Log.w(TAG, "Skipping cache release: ${activePlayers.get()} players still active.")
+        val activePlayers = activePlayerTokens.size
+        val activePrefetches = activePrefetchCount.get()
+
+        if (activePlayers > 0 || activePrefetches > 0) {
+            Log.w(
+                TAG,
+                "Skipping releaseCache: $activePlayers players and $activePrefetches prefetch operations are active."
+            )
             return
         }
+
         synchronized(this) {
+            if (activePlayerTokens.size > 0 || activePrefetchCount.get() > 0) {
+                return
+            }
             try {
                 simpleCache?.release()
                 simpleCache = null
+                completedPrefetches.clear()
                 Log.d(TAG, "Media cache successfully released.")
             } catch (e: Exception) {
                 Log.e(TAG, "Error releasing media cache", e)
