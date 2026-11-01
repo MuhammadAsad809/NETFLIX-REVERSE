@@ -6,6 +6,7 @@ import android.content.Intent
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -40,9 +41,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -54,6 +57,7 @@ import androidx.media3.ui.PlayerView
 import com.airbnb.lottie.compose.*
 import com.netflix.moviebox.api.MovieBoxClient
 import com.netflix.moviebox.ui.theme.NetflixColors
+import com.netflix.moviebox.ui.theme.NetflixTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -70,6 +74,12 @@ class PlayerActivity : ComponentActivity() {
         hideSystemUI()
 
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL) ?: ""
+        if (streamUrl.isBlank()) {
+            Toast.makeText(this, "Stream URL is not available", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+
         val movieTitle = intent.getStringExtra(EXTRA_TITLE) ?: "Movie"
         val subjectId = intent.getStringExtra(EXTRA_SUBJECT_ID) ?: ""
         val seasonNumber = intent.getIntExtra(EXTRA_SEASON_NUMBER, 0)
@@ -78,18 +88,20 @@ class PlayerActivity : ComponentActivity() {
         val detailPath = intent.getStringExtra(EXTRA_DETAIL_PATH) ?: ""
 
         setContent {
-            NetflixVideoPlayer(
-                initialStreamUrl = streamUrl,
-                initialTitle = movieTitle,
-                subjectId = subjectId,
-                seasonNumber = seasonNumber,
-                initialEpisodeNumber = episodeNumber,
-                totalEpisodes = totalEpisodes,
-                detailPath = detailPath,
-                isPipMode = isPipMode,
-                onBackPressed = { finish() },
-                onPlayerReady = { player -> exoPlayer = player }
-            )
+            NetflixTheme {
+                NetflixVideoPlayer(
+                    initialStreamUrl = streamUrl,
+                    initialTitle = movieTitle,
+                    subjectId = subjectId,
+                    seasonNumber = seasonNumber,
+                    initialEpisodeNumber = episodeNumber,
+                    totalEpisodes = totalEpisodes,
+                    detailPath = detailPath,
+                    isPipMode = isPipMode,
+                    onBackPressed = { finish() },
+                    onPlayerReady = { player -> exoPlayer = player }
+                )
+            }
         }
     }
 
@@ -238,7 +250,24 @@ fun NetflixVideoPlayer(
 
     // Netflix Ultra-Smooth Media Pipeline with LRU Chunk Cache
     val exoPlayer = remember {
-        val cacheDataSourceFactory = VideoCacheManager.buildDataSourceFactory(context)
+        val cacheDataSourceFactory = try {
+            VideoCacheManager.buildDataSourceFactory(context)
+        } catch (t: Throwable) {
+            Log.e("PlayerActivity", "Fallback to DefaultHttpDataSource", t)
+            DefaultHttpDataSource.Factory()
+                .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
+                .setDefaultRequestProperties(
+                    mapOf(
+                        "Referer" to "https://themoviebox.xyz/",
+                        "Origin" to "https://themoviebox.xyz",
+                        "Accept" to "*/*",
+                        "Connection" to "keep-alive"
+                    )
+                )
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(20000)
+                .setReadTimeoutMs(25000)
+        }
 
         val renderersFactory = DefaultRenderersFactory(context)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
@@ -248,8 +277,8 @@ fun NetflixVideoPlayer(
         // 500ms Instant Startup, 50s lookahead buffer, 60s RAM backbuffer
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 50_000,
-                /* maxBufferMs = */ 120_000,
+                /* minBufferMs = */ 30_000,
+                /* maxBufferMs = */ 90_000,
                 /* bufferForPlaybackMs = */ 500,
                 /* bufferForPlaybackAfterRebufferMs = */ 1_500
             )
@@ -284,9 +313,15 @@ fun NetflixVideoPlayer(
             .apply {
                 setAudioAttributes(audioAttributes, true)
                 setWakeMode(C.WAKE_MODE_NETWORK)
-                setMediaItem(MediaItem.fromUri(currentStreamUrl))
-                prepare()
-                playWhenReady = true
+                if (currentStreamUrl.isNotBlank()) {
+                    try {
+                        setMediaItem(MediaItem.fromUri(currentStreamUrl))
+                        prepare()
+                        playWhenReady = true
+                    } catch (e: Throwable) {
+                        Log.e("PlayerActivity", "Failed to set media item", e)
+                    }
+                }
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
                         isBuffering = (state == Player.STATE_BUFFERING)
@@ -296,6 +331,16 @@ fun NetflixVideoPlayer(
 
                     override fun onIsPlayingChanged(playing: Boolean) {
                         isPlaying = playing
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        Log.e("PlayerActivity", "ExoPlayer error [${error.errorCodeName}]", error)
+                        isBuffering = false
+                        Toast.makeText(
+                            context,
+                            "Playback error: ${error.localizedMessage ?: "Stream unavailable"}",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 })
                 onPlayerReady(this)
@@ -349,9 +394,15 @@ fun NetflixVideoPlayer(
     // Continuous timeline sync
     LaunchedEffect(isPlaying) {
         while (true) {
-            currentPosition = exoPlayer.currentPosition
-            totalDuration = exoPlayer.duration.coerceAtLeast(0L)
-            bufferedPosition = exoPlayer.bufferedPosition.coerceAtLeast(0L)
+            try {
+                if (exoPlayer.playbackState != Player.STATE_IDLE) {
+                    currentPosition = exoPlayer.currentPosition
+                    totalDuration = exoPlayer.duration.coerceAtLeast(0L)
+                    bufferedPosition = exoPlayer.bufferedPosition.coerceAtLeast(0L)
+                }
+            } catch (e: Throwable) {
+                break
+            }
             delay(400)
         }
     }
@@ -384,17 +435,25 @@ fun NetflixVideoPlayer(
                                 val newBrightness = (currentBrightness + delta).coerceIn(0.05f, 1.0f)
                                 currentBrightness = newBrightness
                                 activity?.let { act ->
-                                    val lp = act.window.attributes
-                                    lp.screenBrightness = newBrightness
-                                    act.window.attributes = lp
+                                    try {
+                                        val lp = act.window.attributes
+                                        lp.screenBrightness = newBrightness
+                                        act.window.attributes = lp
+                                    } catch (e: Throwable) {
+                                        // safe ignore
+                                    }
                                 }
                                 showBrightnessHud = true
                             } else {
                                 val newVolRatio = (currentVolumeRatio + delta).coerceIn(0f, 1f)
                                 currentVolumeRatio = newVolRatio
                                 audioManager?.let { am ->
-                                    val targetVol = (newVolRatio * maxVolume).toInt()
-                                    am.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                                    try {
+                                        val targetVol = (newVolRatio * maxVolume).toInt()
+                                        am.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                                    } catch (e: Throwable) {
+                                        // safe ignore
+                                    }
                                 }
                                 showVolumeHud = true
                             }
@@ -1021,15 +1080,20 @@ fun NetflixVideoPlayer(
                                                 detailPath = detailPath
                                             )
                                             val nextUrl = playRes.bestStreamUrl ?: playRes.streams.firstOrNull()?.url
-                                            if (nextUrl != null) {
+                                            if (!nextUrl.isNullOrBlank()) {
                                                 currentEpisode = nextEp
                                                 currentStreamUrl = nextUrl
                                                 val cleanTitle = activeTitle.substringBefore(" - S").substringBefore(" [")
                                                 activeTitle = "$cleanTitle - S${seasonNumber}:E${nextEp}"
-                                                exoPlayer.setMediaItem(MediaItem.fromUri(nextUrl))
-                                                exoPlayer.prepare()
-                                                exoPlayer.play()
-                                                Toast.makeText(context, "Playing Episode $nextEp", Toast.LENGTH_SHORT).show()
+                                                try {
+                                                    exoPlayer.setMediaItem(MediaItem.fromUri(nextUrl))
+                                                    exoPlayer.prepare()
+                                                    exoPlayer.play()
+                                                    Toast.makeText(context, "Playing Episode $nextEp", Toast.LENGTH_SHORT).show()
+                                                } catch (e: Throwable) {
+                                                    Log.e("PlayerActivity", "Failed to switch episode", e)
+                                                    Toast.makeText(context, "Error loading episode $nextEp", Toast.LENGTH_SHORT).show()
+                                                }
                                             } else {
                                                 Toast.makeText(context, "Next episode stream not available", Toast.LENGTH_SHORT).show()
                                             }

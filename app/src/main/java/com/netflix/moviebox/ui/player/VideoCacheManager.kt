@@ -72,17 +72,25 @@ object VideoCacheManager {
     }
 
     @Synchronized
-    fun getCache(context: Context): SimpleCache {
-        return simpleCache ?: run {
+    fun getCache(context: Context): SimpleCache? {
+        if (simpleCache != null) return simpleCache
+        return try {
             val cacheDir = File(context.applicationContext.cacheDir, "netflix_media_cache")
             if (!cacheDir.exists()) {
                 cacheDir.mkdirs()
             }
             val evictor = LeastRecentlyUsedCacheEvictor(MAX_CACHE_SIZE)
-            val databaseProvider = StandaloneDatabaseProvider(context.applicationContext)
+            val databaseProvider = try {
+                StandaloneDatabaseProvider(context.applicationContext)
+            } catch (t: Throwable) {
+                null
+            }
             SimpleCache(cacheDir, evictor, databaseProvider).also {
                 simpleCache = it
             }
+        } catch (t: Throwable) {
+            Log.w(TAG, "SimpleCache initialization failed, fallback to direct streaming: ${t.message}")
+            null
         }
     }
 
@@ -90,8 +98,6 @@ object VideoCacheManager {
         context: Context,
         customHeaders: Map<String, String>? = null
     ): DataSource.Factory {
-        val cache = getCache(context)
-
         val defaultHeaders = mapOf(
             "Referer" to "https://themoviebox.xyz/",
             "Origin" to "https://themoviebox.xyz",
@@ -102,14 +108,31 @@ object VideoCacheManager {
         // Custom headers safely override or augment defaults without stripping essential headers
         val headers = defaultHeaders + (customHeaders ?: emptyMap())
 
-        val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+        // 1. High-speed, rock-solid DefaultHttpDataSource with VLC headers & cross-protocol redirects
+        val httpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
             .setDefaultRequestProperties(headers)
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(20000)
+            .setReadTimeoutMs(25000)
 
-        return CacheDataSource.Factory()
-            .setCache(cache)
-            .setUpstreamDataSourceFactory(okHttpDataSourceFactory)
-            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        // 2. Safe Cache wrapper: if SimpleCache is available without error, wrap with CacheDataSource.
+        // If anything fails during cache initialization (folder locked, SQLite locked, etc.),
+        // fall back smoothly to direct httpDataSourceFactory without throwing!
+        return try {
+            val cache = getCache(context)
+            if (cache != null) {
+                CacheDataSource.Factory()
+                    .setCache(cache)
+                    .setUpstreamDataSourceFactory(httpDataSourceFactory)
+                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            } else {
+                httpDataSourceFactory
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "CacheDataSource initialization bypassed: ${t.message}")
+            httpDataSourceFactory
+        }
     }
 
     /**
@@ -130,15 +153,20 @@ object VideoCacheManager {
         // 1. Fast check if already completed
         if (completedPrefetches.contains(streamUrl)) return
 
-        // 2. SimpleCache span check: if already cached on disk, skip network work completely
+        // 2. Safe cache check
+        val cache = try {
+            getCache(context)
+        } catch (e: Throwable) {
+            null
+        } ?: return
+
         try {
-            val cache = getCache(context)
             if (cache.isCached(streamUrl, 0, prefetchBytes)) {
                 completedPrefetches.add(streamUrl)
                 return
             }
-        } catch (e: Exception) {
-            // cache access error, proceed to prefetch
+        } catch (e: Throwable) {
+            // cache read error, continue
         }
 
         // 3. In-flight duplicate prevention
@@ -148,7 +176,7 @@ object VideoCacheManager {
 
         prefetchScope.launch {
             try {
-                val cache = getCache(context)
+                val currentCache = getCache(context) ?: return@launch
                 val defaultHeaders = mapOf(
                     "Referer" to "https://themoviebox.xyz/",
                     "Origin" to "https://themoviebox.xyz",
@@ -157,13 +185,16 @@ object VideoCacheManager {
                 )
                 val headers = defaultHeaders + (customHeaders ?: emptyMap())
 
-                val okHttpFactory = OkHttpDataSource.Factory(okHttpClient)
+                val httpFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
                     .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
                     .setDefaultRequestProperties(headers)
+                    .setAllowCrossProtocolRedirects(true)
+                    .setConnectTimeoutMs(20000)
+                    .setReadTimeoutMs(25000)
 
                 val factory = CacheDataSource.Factory()
-                    .setCache(cache)
-                    .setUpstreamDataSourceFactory(okHttpFactory)
+                    .setCache(currentCache)
+                    .setUpstreamDataSourceFactory(httpFactory)
                     .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
                 val dataSource = factory.createDataSource()
@@ -184,7 +215,7 @@ object VideoCacheManager {
                 writer.cache()
                 completedPrefetches.add(streamUrl)
                 Log.d(TAG, "Prefetched $prefetchBytes bytes for $streamUrl")
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.w(TAG, "Stream prefetch failed for $streamUrl: ${e.message}")
             } finally {
                 inFlightPrefetches.remove(streamUrl)

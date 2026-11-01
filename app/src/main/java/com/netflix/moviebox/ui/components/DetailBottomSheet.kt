@@ -82,9 +82,13 @@ fun DetailBottomSheet(
         isLoadingDetail = false
 
         // Netflix-style pre-fetch: cache first 2MB while user views details
-        val prefetchUrl = detailResult?.streams?.fullStreamUrl ?: detailResult?.streams?.trailerUrl ?: currentMovie.trailerUrl
-        if (!prefetchUrl.isNullOrEmpty()) {
-            com.netflix.moviebox.ui.player.VideoCacheManager.prefetchStream(context, prefetchUrl)
+        try {
+            val prefetchUrl = detailResult?.streams?.fullStreamUrl ?: detailResult?.streams?.trailerUrl ?: currentMovie.trailerUrl
+            if (!prefetchUrl.isNullOrBlank()) {
+                com.netflix.moviebox.ui.player.VideoCacheManager.prefetchStream(context, prefetchUrl)
+            }
+        } catch (e: Throwable) {
+            // safe ignore
         }
     }
 
@@ -118,13 +122,15 @@ fun DetailBottomSheet(
 
                 val staticStreamUrl = detailResult?.streams?.fullStreamUrl ?: detailResult?.streams?.trailerUrl ?: currentMovie.trailerUrl
                 val finalUrl = matched?.url ?: staticStreamUrl
-                if (finalUrl != null) {
+                if (!finalUrl.isNullOrBlank()) {
                     val playTitle = if (isSeries) {
                         "${currentMovie.title} - S${seNum}:E${epNum} [${selectedQuality}]"
                     } else {
                         "${currentMovie.title} [${selectedQuality}]"
                     }
                     onPlayClick(finalUrl, playTitle, currentMovie.subjectId, seNum, epNum, totalEps, activeDetailPath)
+                } else {
+                    android.widget.Toast.makeText(context, "Stream not available for this title", android.widget.Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -646,10 +652,12 @@ fun DetailBottomSheet(
 
                                     val staticStreamUrl = detailResult?.streams?.fullStreamUrl ?: currentMovie.trailerUrl
                                     val finalUrl = matched?.url ?: staticStreamUrl
-                                    if (finalUrl != null) {
+                                    if (!finalUrl.isNullOrBlank()) {
                                         val epTitle = "${currentMovie.title} - S${seNum}:E${epNum} [${selectedQuality}]"
                                         val totalEps = activeSeason.episodes.size
                                         onPlayClick(finalUrl, epTitle, currentMovie.subjectId, seNum, epNum, totalEps, activeDetailPath)
+                                    } else {
+                                        android.widget.Toast.makeText(context, "Episode stream not available", android.widget.Toast.LENGTH_SHORT).show()
                                     }
                                 } catch (e: Exception) {
                                     e.printStackTrace()

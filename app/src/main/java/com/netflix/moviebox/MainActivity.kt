@@ -143,7 +143,7 @@ fun MainAppScaffold() {
                                 val bestUrl = playRes.bestStreamUrl
                                     ?: MovieBoxClient.extractStream(movie.subjectId).fullStreamUrl
                                     ?: movie.trailerUrl
-                                if (bestUrl != null) {
+                                if (!bestUrl.isNullOrBlank()) {
                                     val titleBadge = if (isSeries) "${movie.title} - S1:E1" else "${movie.title} [Full Movie]"
                                     PlayerActivity.launch(
                                         context = context,
