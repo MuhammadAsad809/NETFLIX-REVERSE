@@ -80,11 +80,7 @@ object VideoCacheManager {
                 cacheDir.mkdirs()
             }
             val evictor = LeastRecentlyUsedCacheEvictor(MAX_CACHE_SIZE)
-            val databaseProvider = try {
-                StandaloneDatabaseProvider(context.applicationContext)
-            } catch (t: Throwable) {
-                null
-            }
+            val databaseProvider = StandaloneDatabaseProvider(context.applicationContext)
             SimpleCache(cacheDir, evictor, databaseProvider).also {
                 simpleCache = it
             }
